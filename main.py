@@ -11,6 +11,7 @@ from media_platform.kuaishou import KuaishouCrawler
 from media_platform.tieba import TieBaCrawler
 from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
+from media_platform.xindongfang import XindongfangCrawler
 
 
 class CrawlerFactory:
@@ -20,7 +21,8 @@ class CrawlerFactory:
         "ks": KuaishouCrawler,
         "bili": BilibiliCrawler,
         "wb": WeiboCrawler,
-        "tieba": TieBaCrawler
+        "tieba": TieBaCrawler,
+        "xdf": XindongfangCrawler,
     }
 
     @staticmethod
