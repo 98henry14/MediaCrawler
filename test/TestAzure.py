@@ -1,3 +1,6 @@
+#!/opt/homebrew/Frameworks/Python.framework/Versions/3.9/bin/
+# -*- codig:utf-8 -*-
+
 import base64
 import datetime
 import subprocess
@@ -10,22 +13,37 @@ import json
 import os
 # import pycryptodome
 from Crypto.Cipher import AES
-from concurrent.futures import ThreadPoolExecutor,as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-dir_path="C:\\Users\\xiaoj\\Downloads"
-old_m3u8_path=f"{dir_path}\\ceshi.m3u8"
-ts_path=f"{dir_path}\\m3u8"
-new_index_m3u8="index-2.m3u8"
-new_m3u8_path=f"{ts_path}\\{new_index_m3u8}"
-merge_video_name="hello.mp4"
+# mac
+ffmpeg_path="/Users/xiexiaojie/Downloads/ffmpeglib/ffmpeg"
+dir_path = "/Volumes/SandiskSSD/python-project/pythonSpider/图灵爬虫/static"
+old_m3u8_path = f"{dir_path}/old.m3u8"
+ts_path = f"{dir_path}/m3u8"
+new_index_m3u8 = "index.m3u8"
+new_m3u8_path = f"{ts_path}/{new_index_m3u8}"
+merge_video_name = "Day 06-修饰集团-之状语精讲-1.mp4"
+
+# win
+# ffmpeg_path="/Users/xiexiaojie/Downloads/ffmpeglib/ffmpeg"
+# dir_path = "C:\\Users\\xiaoj\\Downloads"
+# old_m3u8_path = f"{dir_path}\\ceshi.m3u8"
+# ts_path = f"{dir_path}\\m3u8"
+# new_index_m3u8 = "index-2.m3u8"
+# new_m3u8_path = f"{ts_path}\\{new_index_m3u8}"
+# merge_video_name = "hello.mp4"
+
 
 def run_azure_command(command):
     try:
-        result = subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {e}")
         return None
+
+
 # r1 = subprocess.run("az --version", check=True, shell=True, stdout=subprocess.PIPE,  text=True)
 # if r1:
 #     print(r1.stdout.strip())
@@ -39,7 +57,6 @@ def run_azure_command(command):
 #     print(res.split("\n"))
 
 
-
 # # 从本地读取m3u8文件，获取ts连接并下载
 def read_m3u8_file(file_path):
     with open(file_path, 'r') as file:
@@ -47,6 +64,8 @@ def read_m3u8_file(file_path):
     ts_urls = []
     key_url = ""
     # 同时写入新的文件里面
+    if not os.path.exists(ts_path):
+        os.mkdir(ts_path)
     index = open(new_m3u8_path, "w")
     for line in lines:
 
@@ -56,11 +75,12 @@ def read_m3u8_file(file_path):
             else:
                 index.write(line)
             continue
-        index.write(f"{ts_path}\\{line.split('?')[0]}\n")
+        index.write(f"{ts_path}{os.path.sep}{line.split('?')[0]}\n")
         ts_urls.append(line.strip())
-    return key_url,ts_urls
+    return key_url, ts_urls
 
-def decrypt_key(raw_content,token):
+
+def decrypt_key(raw_content, token):
     print(raw_content)
 
     tk = json.loads(base64.b64decode(token))
@@ -73,9 +93,8 @@ def decrypt_key(raw_content,token):
 
 
 # 从本地读取m3u8文件，并提取
-kurl,res = read_m3u8_file(old_m3u8_path)
+kurl, res = read_m3u8_file(old_m3u8_path)
 print(res)
-
 
 # os.system("az --version")
 
@@ -101,7 +120,6 @@ params = {
     "auth_key": "1726318708-d837203db925427b8576e8adec33e6d7-0-fa96b7c010b86635fc89962135d54425"
 }
 
-
 # 解析key的 URL
 parsed_url = urlparse(kurl)
 
@@ -115,14 +133,14 @@ print("查询参数:", query_params)
 vid = query_params['vid'][0]
 
 # 提取key，并获取最终解密的key
-resp = requests.get(kurl, headers=headers,  stream=True)
+resp = requests.get(kurl, headers=headers, stream=True)
 resp.raw.decode_content = True
 dt = resp.raw.read()
-kb = decrypt_key(dt,query_params['MtsHlsUriToken'][0])
+kb = decrypt_key(dt, query_params['MtsHlsUriToken'][0])
 # okb = [59,223,20,27,102,158,210,1,199,119,114,66,238,119,185,46]
 # kb = bytes(okb)
 print(kb)
-ib = bytes([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+ib = bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 """
 iv 的加密方式如下，问题 A 从哪里来，貌似都回累计加1，
@@ -137,44 +155,52 @@ key的取值
 2.提取uri中MtsHlsUriToken的值，通过base64解析为json，再提取其中key
 3.将获得二进制数组byteArr逐位跟key进行 ^ 异或操作，最终结果就是kb
 
-        
+
 """
+
+
 def download_ts(re):
     url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{re}"
     urlsplit = re.split("?")
     response = requests.get(url, headers=headers)
     # print(response)
     desc = AES.new(kb, AES.MODE_CBC, ib).decrypt(response.content)
-    with open(os.path.join(ts_path+"\\", urlsplit[0]),
+    with open(os.path.join(ts_path , urlsplit[0]),
               mode="wb") as f3:
         f3.write(desc)
-    print("{}->file './{}'".format(threading.currentThread().getName(),urlsplit[0]))
+    print("{}->file './{}'".format(threading.currentThread().getName(), urlsplit[0]))
     return True
 
-start= datetime.datetime.now()
-task= []
-# print("使用多线程方式下载ts文件")
-# with ThreadPoolExecutor(max_workers=50) as executor:
-#     # results = executor.map(download_ts,res)
-#     task.extend([executor.submit(download_ts, ts) for ts in res])
-#     print("任务总数",len(task))
-#
-# as_completed(task,timeout=60)
-# print("使用多线程方式下载ts文件完成,耗时",datetime.datetime.now()-start)
+
+start = datetime.datetime.now()
+task = []
+print("使用多线程方式下载ts文件")
+with ThreadPoolExecutor(max_workers=50) as executor:
+    # results = executor.map(download_ts,res)
+    task.extend([executor.submit(download_ts, ts) for ts in res])
+    print("任务总数",len(task))
+
+as_completed(task,timeout=10)
+print("使用多线程方式下载ts文件完成,耗时",datetime.datetime.now()-start)
 # 任务总数 23,使用多线程方式下载ts文件完成,耗时 0:01:06.389875
+# 在 mac 中，任务总数 307 使用多线程方式下载ts文件完成,耗时 0:00:11.347175
 
 # 如果不使用多线程执行的话
-print("循环下载ts文件")
-for re in res:
-    download_ts(re)
-print("循环下载ts文件完成,耗时",datetime.datetime.now()-start)
+# print("循环下载ts文件")
+# for re in res:
+#     download_ts(re)
+# print("循环下载ts文件完成,耗时", datetime.datetime.now() - start)
 # 任务总数 23 循环下载ts文件完成,耗时 0:00:48.333951
+
+
 
 
 # os.chdir(dir_path+"m3u8")
 # os.system("ffmpeg -i index.m3u8 -c copy new1.mp4")
-run_azure_command(f"cd {ts_path}")
-run_azure_command(f"ffmpeg -i {new_index_m3u8} -c copy {merge_video_name}")
+# run_azure_command(f"cd {ts_path}")
+# run_azure_command(f"cd {ts_path}; ffmpeg -i {new_index_m3u8} -c copy {merge_video_name}")
+os.chdir(ts_path)
+os.system(f"ffmpeg -i {new_index_m3u8} -c copy {merge_video_name}")
 # import csv
 #
 # # res = os.system("az ad user list --filter \"userPrincipalName eq 'xie.xj.17@pg.com'\" --query [].userPrincipalName --output tsv")
