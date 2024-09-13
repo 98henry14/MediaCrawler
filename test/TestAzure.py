@@ -1,6 +1,3 @@
-#!/opt/homebrew/Frameworks/Python.framework/Versions/3.9/bin/
-# -*- codig:utf-8 -*-
-
 import base64
 import datetime
 import subprocess
@@ -14,36 +11,49 @@ import os
 # import pycryptodome
 from Crypto.Cipher import AES
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import platform
 
+sys = platform.system()
+if sys == "Darwin":
 # mac
-ffmpeg_path="/Users/xiexiaojie/Downloads/ffmpeglib/ffmpeg"
-dir_path = "/Volumes/SandiskSSD/python-project/pythonSpider/图灵爬虫/static"
-old_m3u8_path = f"{dir_path}/old.m3u8"
-ts_path = f"{dir_path}/m3u8"
-new_index_m3u8 = "index.m3u8"
-new_m3u8_path = f"{ts_path}/{new_index_m3u8}"
-merge_video_name = "Day 06-修饰集团-之状语精讲-1.mp4"
+    ffmpeg_path="/Users/xiexiaojie/Downloads/ffmpeglib/ffmpeg"
+    dir_path = "/Volumes/SandiskSSD/python-project/pythonSpider/图灵爬虫/static"
+    old_m3u8_path = f"{dir_path}/old.m3u8"
+    ts_path = f"{dir_path}/m3u8"
+    new_index_m3u8 = "index.m3u8"
+    new_m3u8_path = f"{ts_path}/{new_index_m3u8}"
+    merge_video_name = "Day 06-修饰集团-之状语精讲-1.mp4"
+elif sys == "Windows":
+    # win
+    ffmpeg_path = "C:\\Users\\xiaoj\\software\\ffmpeg-master-latest-win64-gpl\\bin\\ffmpeg.exe"
+    dir_path = "C:\\Users\\xiaoj\\Downloads"
+    old_m3u8_path = f"{dir_path}\\ceshi.m3u8"
+    ts_path = f"{dir_path}\\m3u8"
+    new_index_m3u8 = "index-2.m3u8"
+    new_m3u8_path = f"{ts_path}{os.path.sep}{new_index_m3u8}"
+    merge_video_name = "hello.mp4"
+elif sys == "Linux":
+    ffmpeg_path =""
+    dir_path =""
+    old_m3u8_path =""
+    ts_path =""
+    new_index_m3u8 =""
+    new_m3u8_path =""
+    merge_video_name =""
+else:
+    print("系统不支持")
+    exit()
 
-# win
-# ffmpeg_path="/Users/xiexiaojie/Downloads/ffmpeglib/ffmpeg"
-# dir_path = "C:\\Users\\xiaoj\\Downloads"
-# old_m3u8_path = f"{dir_path}\\ceshi.m3u8"
-# ts_path = f"{dir_path}\\m3u8"
-# new_index_m3u8 = "index-2.m3u8"
-# new_m3u8_path = f"{ts_path}\\{new_index_m3u8}"
-# merge_video_name = "hello.mp4"
+
 
 
 def run_azure_command(command):
     try:
-        result = subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True)
+        result = subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {e}")
         return None
-
-
 # r1 = subprocess.run("az --version", check=True, shell=True, stdout=subprocess.PIPE,  text=True)
 # if r1:
 #     print(r1.stdout.strip())
@@ -55,6 +65,7 @@ def run_azure_command(command):
 # if res:
 #     print("执行aure")
 #     print(res.split("\n"))
+
 
 
 # # 从本地读取m3u8文件，获取ts连接并下载
@@ -96,6 +107,7 @@ def decrypt_key(raw_content, token):
 kurl, res = read_m3u8_file(old_m3u8_path)
 print(res)
 
+
 # os.system("az --version")
 
 
@@ -119,6 +131,7 @@ url = "https://media-editor.roombox.xdf.cn/clouddriver-transcode/5bf82ce0eda271e
 params = {
     "auth_key": "1726318708-d837203db925427b8576e8adec33e6d7-0-fa96b7c010b86635fc89962135d54425"
 }
+
 
 # 解析key的 URL
 parsed_url = urlparse(kurl)
@@ -155,10 +168,8 @@ key的取值
 2.提取uri中MtsHlsUriToken的值，通过base64解析为json，再提取其中key
 3.将获得二进制数组byteArr逐位跟key进行 ^ 异或操作，最终结果就是kb
 
-
+        
 """
-
-
 def download_ts(re):
     url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{re}"
     urlsplit = re.split("?")
@@ -175,7 +186,7 @@ def download_ts(re):
 start = datetime.datetime.now()
 task = []
 print("使用多线程方式下载ts文件")
-with ThreadPoolExecutor(max_workers=50) as executor:
+with ThreadPoolExecutor(max_workers=20) as executor:
     # results = executor.map(download_ts,res)
     task.extend([executor.submit(download_ts, ts) for ts in res])
     print("任务总数",len(task))
@@ -191,6 +202,7 @@ print("使用多线程方式下载ts文件完成,耗时",datetime.datetime.now()
 #     download_ts(re)
 # print("循环下载ts文件完成,耗时", datetime.datetime.now() - start)
 # 任务总数 23 循环下载ts文件完成,耗时 0:00:48.333951
+# 任务总数 249 循环下载ts文件完成,耗时 0:06:17.746527
 
 
 
@@ -200,7 +212,7 @@ print("使用多线程方式下载ts文件完成,耗时",datetime.datetime.now()
 # run_azure_command(f"cd {ts_path}")
 # run_azure_command(f"cd {ts_path}; ffmpeg -i {new_index_m3u8} -c copy {merge_video_name}")
 os.chdir(ts_path)
-os.system(f"ffmpeg -i {new_index_m3u8} -c copy {merge_video_name}")
+os.system(f"{ffmpeg_path} -i {new_index_m3u8} -c copy {merge_video_name}")
 # import csv
 #
 # # res = os.system("az ad user list --filter \"userPrincipalName eq 'xie.xj.17@pg.com'\" --query [].userPrincipalName --output tsv")
