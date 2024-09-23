@@ -1,5 +1,6 @@
 import asyncio
-import os
+import os,re
+import platform
 import random
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple
@@ -18,6 +19,7 @@ from .client import XindongfangClient
 from .exception import DataFetchError
 # from .field import SearchSortType
 from .login import XindongfangLogin
+from cache.redis_cache import RedisCache
 
 
 class XindongfangCrawler(AbstractCrawler):
@@ -27,8 +29,11 @@ class XindongfangCrawler(AbstractCrawler):
 
     def __init__(self) -> None:
         self.index_url = "https://study.koolearn.com/my"
+        # self.index_url = "https://study.koolearn.com/ky/learning/188924/22666338/19725417"
         # self.user_agent = utils.get_user_agent()
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        self.cache = RedisCache()
+        self.root_path = config.XDF_ROOT_PATH
 
     async def start(self) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -46,8 +51,10 @@ class XindongfangCrawler(AbstractCrawler):
                 self.user_agent,
                 headless=config.HEADLESS
             )
+
             # stealth.min.js is a js script to prevent the website from detecting the crawler.
             await self.browser_context.add_init_script(path="libs/stealth.min.js")
+            await self.browser_context.add_init_script(path="libs/15359f6a9bf74d07be6934bdcd11f00a.js")
             # add a cookie attribute webId to avoid the appearance of a sliding captcha on the webpage
             await self.browser_context.add_cookies([{
                 'name': "webId",
@@ -56,7 +63,8 @@ class XindongfangCrawler(AbstractCrawler):
                 'path': "/"
             }])
             self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
+
+            await self.context_page.goto(self.index_url,wait_until="domcontentloaded")
 
             # Create a client to interact with the xiaohongshu website.
             self.xdf_client = await self.create_xdf_client(httpx_proxy_format)
@@ -75,6 +83,7 @@ class XindongfangCrawler(AbstractCrawler):
             if config.CRAWLER_TYPE == "search":
                 # Search for notes and retrieve their comment information.
                 # await self.search()
+                await self.handle_all_path()
                 await self.test()
             elif config.CRAWLER_TYPE == "detail":
                 # Get the information and comments of the specified post
@@ -301,6 +310,13 @@ class XindongfangCrawler(AbstractCrawler):
     ) -> BrowserContext:
         """Launch browser and create browser context"""
         utils.logger.info("[XindongfangCrawler.launch_browser] Begin create browser context ...")
+        # 增加本地chrome路径打开好点
+        if platform.system() == "Windows":
+            executable_path = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+        elif platform.system() == "Linux":
+            executable_path = ""
+        else:
+            executable_path = ""
         if config.SAVE_LOGIN_STATE:
             # feat issue #14
             # we will save login state to avoid login every time
@@ -313,15 +329,16 @@ class XindongfangCrawler(AbstractCrawler):
                 proxy=playwright_proxy,  # type: ignore
                 viewport={"width": 1920, "height": 1080},
                 user_agent=user_agent,
-                record_video_dir="./record/"
+                # record_video_dir="./record/",
+                executable_path=executable_path,
             )
             return browser_context
         else:
-            browser = await chromium.launch(headless=headless, proxy=playwright_proxy)  # type: ignore
+            browser = await chromium.launch(executable_path=executable_path,headless=headless, proxy=playwright_proxy)  # type: ignore
             browser_context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=user_agent,
-                record_video_dir="./record/"
+                # record_video_dir="./record/",
             )
             return browser_context
 
@@ -390,11 +407,52 @@ class XindongfangCrawler(AbstractCrawler):
             await xhs_store.update_xhs_note_image(note_id, content, extension_file_name)
 
     async def test(self):
-        await self.context_page.goto("https://study.koolearn.com/ky/learning/188924/22666338/19725417")
+        await self.context_page.goto("https://study.koolearn.com/ky/learning/188924/22666338/18800049")
 
-        video = self.context_page.locator('video')
-        # self.context_page.get_by_role("button", name="播放")
-        await video.get_attribute('ended', timeout=30000)
-        # await video.wait_for('ended', timeout=0)
 
+        async with self.context_page.expect_response("**/v1/play/getVideoUrl") as resp:
+            info = await resp.value
+            text = await info.text()
+            json = await info.json()
+            print("获取response",info)
+            print("获取response",text)
+            print("获取response",json)
+            self.cache.setStr("18800049",json.get('url_infos')[0])
+
+        async with self.context_page.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
+            info = await r2.value
+            text = await info.text()
+            filename = info.request.url.split("?")[0].split("/")[-1]
+            with open(os.path.join("C:\\Users\\xiaoj\\Downloads\\m3u8", filename), "w", encoding="utf-8") as f:
+                f.write(text)
+            self.cache.setStr(filename.split(".")[0],"m3u8_file_done")
+
+    async def getM3u8File(self,url):
+        # await self.context_page.goto("https://study.koolearn.com/ky/learning/188924/22666338/18800049")
+        await self.context_page.goto(url)
+        self.cache.get(key="m3u8_url")
+
+        async with self.context_page.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
+            info = await r2.value
+            filename = info.request.url.split("?")[0].split("/")[-1]
+            text = await info.text()
+            utils.logger.info("[XindongfangCrawler.close] 获取m3u8的文件内容 ...",filename)
+#             写入到本地文件,todo,记得替换路径,这里也可以直接拿到相关的信息然后往下传递
+            async with open(os.path.join("C:\\Users\\xiaoj\\Downloads\\m3u8",filename),"w",encoding="utf-8") as f:
+                f.write(text)
+
+
+
+    async def handle_all_path(self):
+        """
+        处理文件目录跟路径
+        todo 一个循环搞死吗?
+        """
+        print(111)
+        product = self.cache.hgetall("product:189526")
+        product.get('lessonStage').get('344056')
+
+
+#     todo 1.搬运下载视频的代码
+#     todo 2.搬运生
 

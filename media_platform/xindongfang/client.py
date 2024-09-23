@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -49,7 +50,6 @@ class XindongfangClient(AbstractApiClient):
         Returns:
 
         """
-        pass
         # encrypt_params = await self.playwright_page.evaluate("([url, data]) => window._webmsxyw(url,data)", [url, data])
         # local_storage = await self.playwright_page.evaluate("() => window.localStorage")
         # signs = sign(
@@ -66,7 +66,7 @@ class XindongfangClient(AbstractApiClient):
         #     "X-B3-Traceid": signs["x-b3-traceid"]
         # }
         # self.headers.update(headers)
-        # return self.headers
+        return self.headers
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
@@ -92,9 +92,9 @@ class XindongfangClient(AbstractApiClient):
         if return_response:
             return response.text
         data: Dict = response.json()
-        if data["success"]:
-            return data.get("data", data.get("success", {}))
-        elif data["code"] == self.IP_ERROR_CODE:
+        if data.get('status') == 0:
+            return data.get("data", data.get("message", {}))
+        elif data.get('status') == self.IP_ERROR_CODE:
             raise IPBlockError(self.IP_ERROR_STR)
         else:
             raise DataFetchError(data.get("msg", None))
@@ -147,11 +147,11 @@ class XindongfangClient(AbstractApiClient):
 
         """
         """get a note to check if login state is ok"""
-        utils.logger.info("[XindongfangClient.pong] Begin to pong xhs...")
+        utils.logger.info("[XindongfangClient.pong] Begin to pong xdf...")
         ping_flag = False
         try:
             note_card: Dict = await self.get_note_by_keyword(keyword="小红书")
-            if note_card.get("items"):
+            if note_card.get("userId"):
                 ping_flag = True
         except Exception as e:
             utils.logger.error(f"[XindongfangClient.pong] Ping xhs failed: {e}, and try to login again...")
@@ -189,17 +189,9 @@ class XindongfangClient(AbstractApiClient):
         Returns:
 
         """
-        uri = "/api/sns/web/v1/search/notes"
-        data = {
-            "keyword": keyword,
-            "page": page,
-            "page_size": page_size,
-            # "search_id": get_search_id(),
-            # "sort": sort.value,
-            # "note_type": note_type.value
-            # "note_type": note_type.value
-        }
-        return await self.post(uri, data)
+        uri = f"/common/find/user?_={int(datetime.datetime.now().timestamp())*1000}"
+
+        return await self.get(uri)
 
     async def get_note_by_id(self, note_id: str, xsec_source: str, xsec_token: str) -> Dict:
         """
