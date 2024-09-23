@@ -1,7 +1,7 @@
 # 基础配置
 import platform
 
-PLATFORM = "xhs"
+PLATFORM = "xdf"
 KEYWORDS = "编程副业,编程兼职"
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
 COOKIES = ""
@@ -141,7 +141,10 @@ FONT_PATH = "./docs/STZHONGS.TTF"
 # 新东方内容下载的跟路径
 if platform.system() == "Windows":
     XDF_ROOT_PATH="C:\\Users\\xiaoj\\Documents\\资料\\xdf"
+    FFMPEG_PATH = "C:\\Users\\xiaoj\\software\\ffmpeg-master-latest-win64-gpl\\bin\\ffmpeg.exe"
 elif platform.system() == "Linux":
     XDF_ROOT_PATH="/home/xiaoj/Documents/资料/xdf"
+    FFMPEG_PATH=""
 else:
-    XDF_ROOT_PATH=""
+    XDF_ROOT_PATH="/Volumes/SandiskSSD/xdf/"
+    FFMPEG_PATH = "/Users/xiexiaojie/Downloads/ffmpeglib/ffmpeg"

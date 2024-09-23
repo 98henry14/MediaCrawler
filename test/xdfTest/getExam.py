@@ -1,7 +1,7 @@
 import requests
 import json
 from concurrent.futures import ThreadPoolExecutor
-import re,os
+import re,os,platform
 
 
 headers = {
@@ -21,42 +21,49 @@ headers = {
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 }
 cookies = {
-    "gr_user_id": "ccb32893-c33e-44d3-bf15-de1537360181",
-    "aba0d864c66383b5_gr_last_sent_cs1": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
-    "Qs_lvt_143225": "1725696856",
+    "gr_user_id": "180344aa-0c5b-47de-baf4-c5d6ed529441",
+    "MEIQIA_TRACK_ID": "2YANdBOEanSI4CQExSj521lvUlW",
+    "MEIQIA_VISIT_ID": "2YANdDjTCWbO3v0KFzaOS5OYY7G",
+    "pt_1783e324": "uid=j1K-9XsiTid3maJgpa4icw&nid=1&vid=-GsUeZ5pqcaD5CcwLoRyqA&vn=1&pvn=1&sact=1699964532997&to_flag=0&pl=gjhLyBSjw/HoAfMfeNNUsg*pt*1699964512221",
+    "pt_6dc02627": "uid=EnrqXUQe7KYZHIwbgpu1kA&nid=0&vid=Qa9YjXydaEuuiicdACZZ9w&vn=4&pvn=1&sact=1709729416327&to_flag=1&pl=qo36Ue6jIhjoaZD2gbwyxg*pt*1709729062821",
     "9dee9d3e36a527e1_gr_last_sent_cs1": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
-    "easeMobId": "koolearn1725712051456838882",
-    "easeMobPassword": "koolearn1725712051456838882",
-    "MEIQIA_TRACK_ID": "2lk77SJE9RG8hKuAacDrqVEVqZA",
-    "MEIQIA_VISIT_ID": "2lk77SeWZjOACKj4nxhNC30VZN8",
-    "Qs_pv_143225": "2416550789484732400%2C2619313347871156000%2C1671800531537438000%2C1672103693951368400",
-    "_ga": "GA1.1.993296956.1713625335",
-    "9dee9d3e36a527e1_gr_cs1": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
-    "_ga_MYF8GNFSSR": "GS1.1.1726104294.6.0.1726104294.0.0.0",
-    "Hm_lvt_5023f5fc98cfb5712c364bb50b12e50e": "1725332527,1726036134,1726639980",
-    "HMACCOUNT": "34DEDCD166447D6D",
-    "koo.line": "study",
-    "sso.ssoId": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
-    "ssoSessionID": "F9FE5D78C807EFA348A00D213654B745-n1",
-    "login_token": "login_token_v2_F9FE5D78C807EFA348A00D213654B745-n1",
-    "aba0d864c66383b5_gr_session_id": "e41a4e28-a166-4676-80af-53221185ba9d",
-    "aba0d864c66383b5_gr_last_sent_sid_with_cs1": "e41a4e28-a166-4676-80af-53221185ba9d",
-    "aba0d864c66383b5_gr_session_id_sent_vst": "e41a4e28-a166-4676-80af-53221185ba9d",
-    "Hm_lpvt_5023f5fc98cfb5712c364bb50b12e50e": "1726728543",
-    "mp_ec424f4c03f8701f7226f5a009d90586_mixpanel": "%7B%22distinct_id%22%3A%20%22%24device%3A191b5dd3c5f6353-09bd6bd13e515b-26001151-1fa400-191b5dd3c5f6353%22%2C%22%24device_id%22%3A%20%22191b5dd3c5f6353-09bd6bd13e515b-26001151-1fa400-191b5dd3c5f6353%22%2C%22%24initial_referrer%22%3A%20%22https%3A%2F%2Flogin.koolearn.com%2Fsso%2FtoLogin.do%3Fnext_page%3Dhttps%253A%252F%252Fstudy.koolearn.com%252Fmy%22%2C%22%24initial_referring_domain%22%3A%20%22login.koolearn.com%22%2C%22__mps%22%3A%20%7B%7D%2C%22__mpso%22%3A%20%7B%22%24initial_referrer%22%3A%20%22https%3A%2F%2Flogin.koolearn.com%2Fsso%2FtoLogin.do%3Fnext_page%3Dhttps%253A%252F%252Fstudy.koolearn.com%252Fmy%22%2C%22%24initial_referring_domain%22%3A%20%22login.koolearn.com%22%7D%2C%22__mpus%22%3A%20%7B%7D%2C%22__mpa%22%3A%20%7B%7D%2C%22__mpu%22%3A%20%7B%7D%2C%22__mpr%22%3A%20%5B%5D%2C%22__mpap%22%3A%20%5B%5D%7D",
-    "kaoyan-0-19833221": "1",
+    "kaoyan-0-18804357": "1",
     "kaoyan-0--1": "0",
+    "_ga_8RBHSP5JM6": "GS1.2.1716702843.2.0.1716702843.60.0.0",
+    "_ga_VE7D9QXBBY": "GS1.2.1716702844.2.0.1716702844.60.0.0",
+    "aba0d864c66383b5_gr_last_sent_cs1": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
+    "koo.line": "study",
+    "koo-guonei-flowrate-webapp": "4bb2b2cdd12a3864be772b8aad5aaaa0",
+    "Hm_lvt_5023f5fc98cfb5712c364bb50b12e50e": "1726661943",
+    "HMACCOUNT": "937221BF9BC51C4E",
+    "_gid": "GA1.2.1765526487.1726661945",
+    "Hm_lpvt_5023f5fc98cfb5712c364bb50b12e50e": "1726661948",
+    "mp_ec424f4c03f8701f7226f5a009d90586_mixpanel": "%7B%22distinct_id%22%3A%20%22%24device%3A18e2311e38db57-03b2366ba66a9f-1d525637-1d73c0-18e2311e38db57%22%2C%22%24device_id%22%3A%20%2218e2311e38db57-03b2366ba66a9f-1d525637-1d73c0-18e2311e38db57%22%2C%22%24initial_referrer%22%3A%20%22https%3A%2F%2Fstudy.koolearn.com%2Fky%2Flearning%2F188924%2F22666338%2F18800053%22%2C%22%24initial_referring_domain%22%3A%20%22study.koolearn.com%22%2C%22__mps%22%3A%20%7B%7D%2C%22__mpso%22%3A%20%7B%22%24initial_referrer%22%3A%20%22https%3A%2F%2Fstudy.koolearn.com%2Fky%2Flearning%2F188924%2F22666338%2F18800053%22%2C%22%24initial_referring_domain%22%3A%20%22study.koolearn.com%22%7D%2C%22__mpus%22%3A%20%7B%7D%2C%22__mpa%22%3A%20%7B%7D%2C%22__mpu%22%3A%20%7B%7D%2C%22__mpr%22%3A%20%5B%5D%2C%22__mpap%22%3A%20%5B%5D%7D",
+    "9dee9d3e36a527e1_gr_session_id": "a617dc71-51ee-44f0-b10e-d8a1a64a118f",
+    "9dee9d3e36a527e1_gr_last_sent_sid_with_cs1": "a617dc71-51ee-44f0-b10e-d8a1a64a118f",
+    "9dee9d3e36a527e1_gr_cs1": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
+    "Qs_lvt_143225": "1719840980%2C1725883186%2C1726316242%2C1726658900%2C1726745113",
+    "Qs_pv_143225": "4173547973745649700%2C385773966642047300%2C3950772463349535000%2C4120952658961817000%2C991578409823529300",
+    "sso.ssoId": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
+    "ssoSessionID": "A90EAE598B71676046A970A3A4F1BC0C-n2",
+    "login_token": "login_token_v2_A90EAE598B71676046A970A3A4F1BC0C-n2",
+    "aba0d864c66383b5_gr_session_id": "12dc61ac-9c3c-4aca-943a-f5ce07adf337",
+    "aba0d864c66383b5_gr_last_sent_sid_with_cs1": "12dc61ac-9c3c-4aca-943a-f5ce07adf337",
+    "_ga": "GA1.1.914741991.1709728842",
+    "JSESSIONID": "D95BCBC8CF6B3844278669EDF0335DD4",
+    "_ga_MYF8GNFSSR": "GS1.1.1726745111.33.1.1726745442.0.0.0",
     "aba0d864c66383b5_gr_cs1": "894308b2e501339019a5e3266c3613532e2c8405e83dda02ca846acde8504cc7f9622194c09e419ef8893c5842fda15e",
-    "daxue-ui-pc-exam": "c4154af0b9cf73b22a56061d3597c648",
-    "koo-daxue-tiku-exam-webapp": "c050c3b44d723881d36d59d28839ff78",
-    "JSESSIONID": "A322D584CB78B28458048686F035CC04"
+    "gioCookie": "yes"
 }
 url = "https://exam.koolearn.com/api/exam-process/v1/answer-sheet/226325773955074"
 
 session = requests.session()
 response = session.get(url, headers=headers, cookies=cookies)
 
-file_path="C:\\Users\\xiaoj\\Documents\\资料\\xdf"
+if platform.system() == "Windows":
+    file_path = "C:\\Users\\xiaoj\\Documents\\资料\\xdf"
+elif platform.system() == "Darwin":
+    file_path = "/Volumes/SandiskSSD/xdf/math/数学2/"
 md5_name=""
 imgParttern = r'<img.*?src="(.*?)".*?>'
 pTagParttern = r'<p>(.*?)</p>'
@@ -98,6 +105,7 @@ def getDeatil(qs):
     return info
 
 data = response.json().get('data')
+print(response.json())
 content = []
 for mod in data.get('modules'):
     content.append(f"# {mod.get('nodeName')}({mod.get('nodeScore')})")

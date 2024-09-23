@@ -153,4 +153,4 @@ if __name__ == '__main__':
     for dt in data:
         productId = dt.get('productId')
         for key,value in dt.items():
-            redis_cache.hset(f"product:{productId}",key,json.dumps(value,ensure_ascii=False))
+            redis_cache.hset(f"xdf:product:{productId}",key,json.dumps(value,ensure_ascii=False))
