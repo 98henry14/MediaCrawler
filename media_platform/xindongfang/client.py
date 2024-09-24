@@ -144,12 +144,13 @@ class XindongfangClient(AbstractApiClient):
             url = f"{self._host}{uri}"
 
         return await self.request(method="POST", url=url, data=json_str, headers=headers, **kwargs)
-    async def get_decrypt_key(self,url,query_params):
+
+    async def get_decrypt_key(self, url, query_params):
         tk = json.loads(base64.b64decode(query_params['MtsHlsUriToken'][0]))
         # print(tk)
         key = tk['key']
         async with httpx.AsyncClient(proxies=self.proxies) as client:
-           async with client.stream("GET", url,headers=self.headers, timeout=self.timeout) as resp:
+            async with client.stream("GET", url, headers=self.headers, timeout=self.timeout) as resp:
                 newR = []
                 # resp.raw.decode_content = True
                 # dt = resp.raw.read()
@@ -160,7 +161,6 @@ class XindongfangClient(AbstractApiClient):
                     for d in dt:
                         newR.append(d ^ key)
                 return bytes(newR)
-
 
     async def get_note_media(self, url: str) -> Union[bytes, None]:
         async with httpx.AsyncClient(proxies=self.proxies) as client:
@@ -220,7 +220,7 @@ class XindongfangClient(AbstractApiClient):
         Returns:
 
         """
-        uri = f"/common/find/user?_={int(datetime.datetime.now().timestamp())*1000}"
+        uri = f"/common/find/user?_={int(datetime.datetime.now().timestamp()) * 1000}"
 
         return await self.get(uri)
 
@@ -478,6 +478,7 @@ class XindongfangClient(AbstractApiClient):
         Returns:
 
         """
+
         def camel_to_underscore(key):
             return re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
 
@@ -511,7 +512,7 @@ class XindongfangClient(AbstractApiClient):
 
     async def get_native(self, url: str):
         async with httpx.AsyncClient(proxies=self.proxies) as client:
-            return await client.request("GET", url,headers=self.headers, timeout=self.timeout)
+            return await client.request("GET", url, headers=self.headers, timeout=self.timeout)
 
     async def get_document(self, url: str):
         hd = self.headers
@@ -519,39 +520,45 @@ class XindongfangClient(AbstractApiClient):
             hd.pop("Content-Type")
         if hd.get("Referer"):
             hd.pop("Referer")
-        hd.update({ "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1",})
-        async with httpx.AsyncClient(follow_redirects=True,proxies=self.proxies) as client:
-            return await client.request("GET", url,headers=hd, timeout=self.timeout,follow_redirects=True)
+        hd.update({
+                      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                      "Sec-Fetch-Dest": "document",
+                      "Sec-Fetch-Mode": "navigate",
+                      "Sec-Fetch-Site": "none",
+                      "Sec-Fetch-User": "?1",
+                      "Upgrade-Insecure-Requests": "1", })
+        async with httpx.AsyncClient(max_redirects=30,proxies=self.proxies) as client:
+            return await client.request("GET", url, headers=hd,follow_redirects=True,  timeout=self.timeout)
 
-
-    async def downloadImg(self,img):
-        qs = img.group(1)
-        imgName = qs.split("/")[-1]
-        img = self.get_native(qs)
+    async def downloadImg(self, img):
+        # qs = img.group(1)
+        imgName = img.split("/")[-1]
+        res = await self.get_native(img)
         with open(os.path.join(self.file_path, "img", imgName), 'wb') as file:
-            file.write(img.content)
-        return f"![]({qs})"
+            file.write(res.content)
+        return f"![]({img})"
 
-    async def replaceImg(self,content):
-        return re.sub(self.imgParttern, self.downloadImg, content)
+    async def replaceImg(self, content):
+        new_content = ""
+        for img in re.findall(self.imgParttern,content):
+            c1 = await self.downloadImg(img)
+            content = content + "" + c1
+        return new_content
+        # return re.sub(self.imgParttern, self.downloadImg, content)
 
-    async def fetchContent(self,content):
+    async def fetchContent(self, content):
         notp = re.findall(self.pTagParttern, content)
         if notp:
             new_content = ""
             for np in notp:
-                new_content = new_content + "" + self.replaceImg(np)
+                imgc = await self.replaceImg(np)
+                new_content = new_content + "" + imgc
 
             return new_content
         else:
             return content
 
-    async def getDeatil(self,qs):
+    async def getDeatil(self, qs):
         url = "https://exam.koolearn.com/api/question/v1/detail"
         data = {
             "questionId": qs.get("questionId"),
@@ -567,11 +574,11 @@ class XindongfangClient(AbstractApiClient):
         #     print("请求失败,", response.json())
         #
         # info = response.json().get('data')
-        info['questionStem'] = self.fetchContent(info.get('questionStem'))
+        info['questionStem'] = await self.fetchContent(info.get('questionStem'))
 
         return info
 
-    async def run(self,examId,file_path=None):
+    async def run(self, examId, file_path=None):
         if file_path:
             self.file_path = file_path
             if not os.path.exists(os.path.join(self.file_path, "img")):
@@ -606,20 +613,22 @@ class XindongfangClient(AbstractApiClient):
                     index = index + 1
                     qs = qs_map.get(question.get('questionId'))
                     content.append(f"### {index}.{question.get('bizQuestionName')}({qs.get('nodeScore')})")
-                    content.append(f"{await self.fetchContent(question.get('questionStem'))}")
+                    c1 = await self.fetchContent(question.get('questionStem'))
+                    content.append(c1)
                     for op in question.get("options"):
                         for o1 in op:
-                            content.append(f"- {o1.get('optionLabel')}.{await self.fetchContent(o1.get('optionValue'))}")
+                            option = await self.fetchContent(o1.get('optionValue'))
+                            content.append(f"- {o1.get('optionLabel')}.{option}")
 
                     content.append(f"[^{index}]: {'*' * 100}")
                     content.append(f"**【标准答案】：{question.get('standardAnswer')} **")
                     for ans in question.get("analysis"):
                         for a1 in ans:
                             if a1.get('analysisValue'):
-                                content.append(f"{await self.fetchContent(a1.get('analysisValue'))}")
+                                av = await self.fetchContent(a1.get('analysisValue'))
+                                content.append(av)
                     content.append("***")
 
         if content:
             with open(write_file_name, 'w', encoding="utf-8") as file:
                 file.write("\n".join(content))
-

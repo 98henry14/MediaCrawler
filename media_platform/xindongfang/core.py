@@ -67,11 +67,11 @@ class XindongfangCrawler(AbstractCrawler):
             await self.browser_context.add_cookies([{
                 'name': "webId",
                 'value': "xxx123",  # any value
-                'domain': ".xiaohongshu.com",
+                'domain': ".koolearn.com",
                 'path': "/"
             }])
             self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
+            await self.context_page.goto(self.index_url,wait_until="domcontentloaded")
 
             # Create a client to interact with the xiaohongshu website.
             self.xdf_client = await self.create_xdf_client(httpx_proxy_format)
@@ -91,7 +91,7 @@ class XindongfangCrawler(AbstractCrawler):
                 # Search for notes and retrieve their comment information.
                 # await self.search()
                 await self.handle_all_path()
-                await self.test()
+                # await self.test()
             elif config.CRAWLER_TYPE == "detail":
                 # Get the information and comments of the specified post
                 await self.get_specified_notes()
@@ -334,7 +334,7 @@ class XindongfangCrawler(AbstractCrawler):
         elif platform.system() == "Linux":
             executable_path = ""
         else:
-            executable_path = ""
+            executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         if config.SAVE_LOGIN_STATE:
             # feat issue #14
             # we will save login state to avoid login every time
@@ -454,10 +454,11 @@ class XindongfangCrawler(AbstractCrawler):
         nodeId = url.split("/")[-2]
         pathId = map.get("pathId")
         if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{nodeId}"):
+            np = await self.browser_context.new_page()
+            np.set_default_timeout(60000)
+            await np.goto(url)
 
-            await self.context_page.goto(url)
-
-            async with self.context_page.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
+            async with np.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
                 info = await r2.value
                 req_url = info.request.url.split("?")[0]
                 filename = req_url.split("/")[-1]
@@ -512,7 +513,7 @@ class XindongfangCrawler(AbstractCrawler):
                     "_": time_util.get_current_timestamp()
                 }
                 # os.path.join(self.root_path, os.path.sep.join(map.get("pathName")))
-                n2 = "数学二"
+                n2 = "数学2"
                 self.file_path = os.path.join(self.root_path, n1,n2)
                 if not os.path.exists(self.file_path):
                     os.mkdir(self.file_path)
@@ -521,6 +522,8 @@ class XindongfangCrawler(AbstractCrawler):
     async def recursion_req(self,rurl,rparams,map):
         if not map.get("path"):
             map["path"] = [rparams.get("pathId")]
+
+        print(f"|{'一'*len(map['path'])} {map['path'][-1]}")
         # headers = self.xdf_client._pre_headers(rurl)
         # headers = self.xdf_client.headers
         # headers.update({"Referer": f"https://study.koolearn.com/ky/course/{map['path'][0]}/30427213929","Accept": "application/json, text/javascript, */*; q=0.01",})
@@ -529,8 +532,6 @@ class XindongfangCrawler(AbstractCrawler):
         # data = await self.xdf_client.request("GET", rurl, headers=headers,params= rparams)
 
         if data:
-
-
             for item in data:
                 final = item.get("isLeaf") if item.get("isLeaf") else False
 
@@ -572,10 +573,12 @@ class XindongfangCrawler(AbstractCrawler):
                     if item.get("type") == 1:
                         map.get("pathName").pop()
                     if item.get("type") == 2:
-                        # await self.handle_vedio(item, map)
-                        continue
+                        await self.handle_vedio(item, map)
                     if item.get("type") == 3:
-                        await self.handle_examination(current_path, item)
+                        await self.handle_examination(current_path, item, map)
+                    if item.get("type") == 10:
+                #         直播课
+                        await self.handle_live_vedio(item,map)
 
                 else:
                     map.get("path").append(item.get("nodeId"))
@@ -594,46 +597,73 @@ class XindongfangCrawler(AbstractCrawler):
 
 
 
-    async def handle_examination(self, current_path, item):
-        item.get('jumpUrl')
-        resp = await self.xdf_client.get_document(f"https://study.koolearn.com{item.get('jumpUrl')}")
-        if resp.status_code == 200:
-            up = resp.request.url
-            params = up.params
-            testResultId = params.get("testResultId")
-            # up = urlparse(resp.request.url)
-            # params = parse_qs(up.query)
-            if testResultId:
-                # utils.logger.info(f"试卷url{resp.request.url}")
-                # testResultId = params['testResultId'][0]
-                await self.xdf_client.run(examId=testResultId, file_path=current_path)
+    async def handle_examination(self, current_path, item, map):
+        pathId = map.get('path')[0]
+        if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{item.get('id')}"):
+            resp = await self.xdf_client.get_document(f"https://study.koolearn.com{item.get('jumpUrl')}")
+            if resp.status_code == 200:
+                up = resp.request.url
+                params = up.params
+                testResultId = params.get("testResultId")
+                # up = urlparse(resp.request.url)
+                # params = parse_qs(up.query)
+                if testResultId:
+                    # utils.logger.info(f"试卷url{resp.request.url}")
+                    # testResultId = params['testResultId'][0]
+                    await self.xdf_client.run(examId=testResultId, file_path=current_path)
+                    self.cache.setStr(f"xdf:video:check_pathid_{pathId}:{item.get('id')}", os.path.join(current_path,item.get('name')+".md"))
+                else:
+                    # 如果没点击过的试卷无法按照上面的方式处理 todo
+                    if up.path.endswith("start-exam"):
+                        paramsmap = {key: value[0] for key, value in params.items()}
+                        detail_url = f"https://exam.koolearn.com/api/paper/v1/detail?paperVersion=&paperId={paramsmap.get('paperId')}"
+                        r1 = await self.xdf_client.get(detail_url)
 
-            else:
-                # 如果没点击过的试卷无法按照上面的方式处理 todo
-                if up.path.endswith("start-exam"):
-                    paramsmap = {key: value[0] for key, value in params.items()}
-                    detail_url = f"https://exam.koolearn.com/api/paper/v1/detail?paperVersion=&paperId={paramsmap.get('paperId')}"
-                    r1 = await self.xdf_client.get(detail_url)
-
-                    if r1:
-                        version = r1.get('paperVersion')
-                        paramsmap.update({'paperVersion': version})
-                        start_url = "https://exam.koolearn.com/api/exam-process/v1/start"
-                        r2 = await self.xdf_client.post(start_url, paramsmap)
-                        if r2:
-                            await self.xdf_client.run(examId=r2.get('testResultId'), file_path=current_path)
+                        if r1:
+                            version = r1.get('paperVersion')
+                            paramsmap.update({'paperVersion': version})
+                            start_url = "https://exam.koolearn.com/api/exam-process/v1/start"
+                            r2 = await self.xdf_client.post(start_url, paramsmap)
+                            if r2:
+                                await self.xdf_client.run(examId=r2.get('testResultId'), file_path=current_path)
+                                self.cache.setStr(f"xdf:video:check_pathid_{pathId}:{item.get('id')}",
+                                                  os.path.join(current_path, item.get('name') + ".md"))
+                            else:
+                                utils.logger.error(f"开启试卷出错了。{r2}")
                         else:
-                            utils.logger.error(f"开启试卷出错了。{r2}")
+                            utils.logger.error(f"请求试卷详情出错了...:{r1}" )
+                    elif up.path.endswith("/pc/entry"):
+                        item.update({"jumpUrl": str(up).replace("https://study.koolearn.com","")})
+                        await self.handle_examination(current_path, item, map)
                     else:
-                        utils.logger.error(f"请求试卷详情出错了...:{r1}" )
-                elif up.path.endswith("/pc/entry"):
-                    item.update({"jumpUrl": str(up).replace("https://study.koolearn.com","")})
-                    await self.handle_examination(current_path, item)
+                        utils.logger.error(f"没有找到试卷的id,{resp.request.url}" )
+            else:
+                utils.logger.error(f"请求试卷出错了{resp.status_code}")
 
+    async def handle_live_vedio(self, item, map):
+        pathId = map['path'][0]
+        jumpUrl = item.get("jumpUrl")
+        if not jumpUrl:
+            return
+        vedio_file = os.path.join(self.file_path,os.path.sep.join(map.get("pathName")),item.get('name')+'.mp4')
 
-                utils.logger.error(f"没有找到试卷的id,{resp.request.url}" )
-        else:
-            utils.logger.error(f"请求试卷出错了{resp.status_code}")
+        if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{item.get('id')}"):
+            newp = await self.browser_context.new_page()
+            newp.set_default_timeout(60000)
+            await newp.goto(f"{self.xdf_client._host}{jumpUrl}", wait_until="domcontentloaded")
+
+            async with newp.expect_response("**/v1/play/getVideoUrl") as resp:
+                info = await resp.value
+                json = await info.json()
+                info.request.post_data_json
+                vedio_url = json.get('url_infos')[0].get('url')
+                # self.cache.setStr("18800049", )
+
+            vedio = await self.xdf_client.get_native(vedio_url)
+            with open(vedio_file, mode="wb") as f3:
+                f3.write(vedio.content)
+
+            self.cache.setStr(f"xdf:video:check_pathid_{pathId}:{item.get('id')}", vedio_url)
 
     async def handle_vedio(self, item, map):
         # 视频文件 可以获取路径从而拿到m3u8文件
