@@ -94,7 +94,7 @@ def read_m3u8_file(file_path):
                 key_url = line.split(',')[1].strip().replace("URI=", "").replace("\"", "")
             else:
                 # index.write(line)
-                content.append(line)
+                content.append(f"{line}\n")
             continue
         # index.write(f"{os.path.sep}{line.split('?')[0]}\n")
         content.append(f"{os.path.sep}{line.split('?')[0]}\n")

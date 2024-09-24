@@ -19,12 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 from .exception import DataFetchError, IPBlockError
 # from .field import SearchNoteType, SearchSortType
 # from .help import get_search_id, sign
+import requests
 
 
 class XindongfangClient(AbstractApiClient):
     def __init__(
             self,
-            timeout=10,
+            timeout=60,
             proxies=None,
             *,
             headers: Dict[str, str],
@@ -62,7 +63,7 @@ class XindongfangClient(AbstractApiClient):
         #     b1=local_storage.get("b1", ""),
         #     x_s=encrypt_params.get("X-s", ""),
         #     x_t=str(encrypt_params.get("X-t", ""))
-        # )
+        #
         #
         # headers = {
         #     "X-S": signs["x-s"],
@@ -119,7 +120,11 @@ class XindongfangClient(AbstractApiClient):
             final_uri = (f"{uri}?"
                          f"{urlencode(params)}")
         headers = await self._pre_headers(final_uri)
-        return await self.request(method="GET", url=f"{self._host}{final_uri}", headers=headers)
+        if final_uri.startswith("http"):
+            url = final_uri
+        else:
+            url = f"{self._host}{final_uri}"
+        return await self.request(method="GET", url=url, headers=headers)
 
     async def post(self, uri: str, data: dict, **kwargs) -> Dict:
         """
@@ -133,21 +138,28 @@ class XindongfangClient(AbstractApiClient):
         """
         headers = await self._pre_headers(uri, data)
         json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
-        return await self.request(method="POST", url=f"{self._host}{uri}",
-                                  data=json_str, headers=headers, **kwargs)
-    async def get_decrypt_key(self,url,query_params):
+        if uri.startswith("http"):
+            url = uri
+        else:
+            url = f"{self._host}{uri}"
 
+        return await self.request(method="POST", url=url, data=json_str, headers=headers, **kwargs)
+    async def get_decrypt_key(self,url,query_params):
+        tk = json.loads(base64.b64decode(query_params['MtsHlsUriToken'][0]))
+        # print(tk)
+        key = tk['key']
         async with httpx.AsyncClient(proxies=self.proxies) as client:
-            resp = await client.stream("GET", url,headers=self.headers, timeout=self.timeout)
-            resp.raw.decode_content = True
-            dt = resp.raw.read()
-            tk = json.loads(base64.b64decode(query_params['MtsHlsUriToken'][0]))
-            # print(tk)
-            key = tk['key']
-            newR = []
-            for d in dt:
-                newR.append(d ^ key)
-            return bytes(newR)
+           async with client.stream("GET", url,headers=self.headers, timeout=self.timeout) as resp:
+                newR = []
+                # resp.raw.decode_content = True
+                # dt = resp.raw.read()
+                # for d in dt:
+                #     newR.append(d ^ key)
+                # async for d in resp.aiter_raw():
+                async for dt in resp.aiter_raw():
+                    for d in dt:
+                        newR.append(d ^ key)
+                return bytes(newR)
 
 
     async def get_note_media(self, url: str) -> Union[bytes, None]:
@@ -497,11 +509,30 @@ class XindongfangClient(AbstractApiClient):
             return note_dict["note"]["note_detail_map"][note_id]["note"]
         raise DataFetchError(html)
 
+    async def get_native(self, url: str):
+        async with httpx.AsyncClient(proxies=self.proxies) as client:
+            return await client.request("GET", url,headers=self.headers, timeout=self.timeout)
+
+    async def get_document(self, url: str):
+        hd = self.headers
+        if hd.get("Content-Type"):
+            hd.pop("Content-Type")
+        if hd.get("Referer"):
+            hd.pop("Referer")
+        hd.update({ "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1",})
+        async with httpx.AsyncClient(follow_redirects=True,proxies=self.proxies) as client:
+            return await client.request("GET", url,headers=hd, timeout=self.timeout,follow_redirects=True)
+
 
     async def downloadImg(self,img):
         qs = img.group(1)
         imgName = qs.split("/")[-1]
-        img = self.get(qs)
+        img = self.get_native(qs)
         with open(os.path.join(self.file_path, "img", imgName), 'wb') as file:
             file.write(img.content)
         return f"![]({qs})"
@@ -531,11 +562,11 @@ class XindongfangClient(AbstractApiClient):
         h2 = self.headers
         h2.update({"content-type": "application/json", "origin": "https://exam.koolearn.com"})
 
-        response = self.post(url, data=data)
-        if response.status_code != 200 or response.json().get('status') != 0:
-            print("请求失败,", response.json())
-
-        info = response.json().get('data')
+        info = await self.post(url, data=data)
+        # if response.status_code != 200 or response.json().get('status') != 0:
+        #     print("请求失败,", response.json())
+        #
+        # info = response.json().get('data')
         info['questionStem'] = self.fetchContent(info.get('questionStem'))
 
         return info
@@ -546,9 +577,7 @@ class XindongfangClient(AbstractApiClient):
             if not os.path.exists(os.path.join(self.file_path, "img")):
                 os.mkdir(os.path.join(self.file_path, "img"))
         url = f"https://exam.koolearn.com/api/exam-process/v1/answer-sheet/{examId}"
-        response = await self.get(url)
-        data = response.json().get('data')
-        print(response.json())
+        data = await self.get(url)
         write_file_name = os.path.join(self.file_path, f"{data.get('paperName')}.md")
         if os.path.exists(write_file_name):
             return
@@ -561,11 +590,17 @@ class XindongfangClient(AbstractApiClient):
                 order = ss.get('nodeOrders')
                 qs_list = ss.get("questions")
                 qs_map = {item.get('questionId'): item for item in qs_list}
-                results = []
-                with ThreadPoolExecutor(max_workers=10) as pool:
-                    futures = pool.map(self.getDeatil, qs_list)
-                    for result in futures:
-                        results.append(result)
+                # results = []
+
+                # with ThreadPoolExecutor(max_workers=10) as pool:
+                #     futures = pool.map(self.getDeatil, qs_list)
+                #     for result in futures:
+                #         results.append(result)
+
+                exec = ThreadPoolExecutor(max_workers=10)
+                loop = asyncio.get_event_loop()
+                task = [loop.run_in_executor(exec, asyncio.run, self.getDeatil(qs)) for qs in qs_list]
+                results = await asyncio.gather(*task)
                 new_list = sorted(results, key=lambda x: qs_map.get(x.get("questionId")).get("nodeOrders"))
                 for question in new_list:
                     index = index + 1
@@ -587,3 +622,4 @@ class XindongfangClient(AbstractApiClient):
         if content:
             with open(write_file_name, 'w', encoding="utf-8") as file:
                 file.write("\n".join(content))
+

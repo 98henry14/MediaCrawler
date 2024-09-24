@@ -28,6 +28,7 @@ import base64
 from Crypto.Cipher import AES
 import threading
 
+
 class XindongfangCrawler(AbstractCrawler):
     context_page: Page
     xdf_client: XindongfangClient
@@ -35,8 +36,9 @@ class XindongfangCrawler(AbstractCrawler):
 
     def __init__(self) -> None:
         self.index_url = "https://study.koolearn.com/my"
-        # self.user_agent = utils.get_user_agent()
-        self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        self.user_agent = utils.get_user_agent()
+        # self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
         self.cache = RedisCache()
         self.root_path = config.XDF_ROOT_PATH
         self.ffmpeg_path = config.FFMPEG_PATH
@@ -60,7 +62,7 @@ class XindongfangCrawler(AbstractCrawler):
 
             # stealth.min.js is a js script to prevent the website from detecting the crawler.
             await self.browser_context.add_init_script(path="libs/stealth.min.js")
-            await self.browser_context.add_init_script(path="libs/15359f6a9bf74d07be6934bdcd11f00a.js")
+            # await self.browser_context.add_init_script(path="libs/15359f6a9bf74d07be6934bdcd11f00a.js")
             # add a cookie attribute webId to avoid the appearance of a sliding captcha on the webpage
             await self.browser_context.add_cookies([{
                 'name': "webId",
@@ -297,9 +299,20 @@ class XindongfangCrawler(AbstractCrawler):
             headers={
                 "User-Agent": self.user_agent,
                 "Cookie": cookie_str,
-                "Origin": "https://study.koolearn.com/",
+                # "Origin": "https://study.koolearn.com/",
                 "Referer": "https://study.koolearn.com/",
-                "Content-Type": "application/json;charset=UTF-8"
+                "Content-Type": "application/json;charset=UTF-8",
+                "Accept": "*/*",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Priority": "u=1, i",
+                "Sec-Ch-Ua": "\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": "\"Windows\"",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "X-Requested-With": "XMLHttpRequest"
             },
             playwright_page=self.context_page,
             cookie_dict=cookie_dict,
@@ -334,7 +347,8 @@ class XindongfangCrawler(AbstractCrawler):
                 proxy=playwright_proxy,  # type: ignore
                 viewport={"width": 1920, "height": 1080},
                 user_agent=user_agent,
-                record_video_dir="./record/"
+                # record_video_dir="./record/",
+                executable_path=executable_path,
             )
             return browser_context
         else:
@@ -413,6 +427,8 @@ class XindongfangCrawler(AbstractCrawler):
             await xhs_store.update_xhs_note_image(note_id, content, extension_file_name)
 
     async def test(self):
+
+
         await self.context_page.goto("https://study.koolearn.com/ky/learning/188924/22666338/18800049")
 
 
@@ -433,31 +449,37 @@ class XindongfangCrawler(AbstractCrawler):
                 f.write(text)
             self.cache.setStr(filename.split(".")[0],"m3u8_file_done")
 
-    async def getM3u8File(self,url):
+    async def getM3u8File(self,url,map):
         # await self.context_page.goto("https://study.koolearn.com/ky/learning/188924/22666338/18800049")
         nodeId = url.split("/")[-2]
-        pathId = url.split("/")[3]
+        pathId = map.get("pathId")
         if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{nodeId}"):
 
             await self.context_page.goto(url)
 
             async with self.context_page.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
                 info = await r2.value
-                filename = info.request.url.split("?")[0].split("/")[-1]
+                req_url = info.request.url.split("?")[0]
+                filename = req_url.split("/")[-1]
+                vid = req_url.split("/")[-2]
                 text = await info.text()
-                utils.logger.info("[XindongfangCrawler.close] 获取m3u8的文件内容 ...",filename)
+                utils.logger.info(f"[XindongfangCrawler.close] 获取m3u8的文件内容 ...m3u8: {filename},vid: {vid}")
     #             写入到本地文件,todo,记得替换路径,这里也可以直接拿到相关的信息然后往下传递
     #             async with open(os.path.join(self.file_path,filename),"w",encoding="utf-8") as f:
     #                 f.write(text)
+                map.update({"rvideoId":vid})
+                self.cache.hset(f"xdf:video:pathid_{pathId}", vid,json.dumps(map,ensure_ascii=False ))
                 ts_urls = []
                 key_url = ""
                 content = []
                 for line in text.split("\n"):
+                    if not line.strip():
+                        continue
                     if line.startswith('#'):
                         if line.startswith('#EXT-X-KEY:'):
                             key_url = line.split(',')[1].strip().replace("URI=", "").replace("\"", "")
                         else:
-                            content.append(line)
+                            content.append(f"{line}\n")
                         continue
                     content.append(f"{os.path.sep}{line.split('?')[0]}\n")
                     ts_urls.append(line.strip())
@@ -473,11 +495,14 @@ class XindongfangCrawler(AbstractCrawler):
         todo 一个循环搞死吗?
         """
 
-        product = self.cache.hgetall("product:189526")
-        product.get('lessonStage').get('344056')
+        # product = self.cache.hgetall("product:189526")
+        # product.get('lessonStage').get('344056')
         product = ["189526"]
         for productId in product:
             path = ["344056"]
+            n1 = "math"
+            if not os.path.exists(os.path.join(self.root_path,n1)):
+                os.mkdir(os.path.join(self.root_path,n1))
             for pathId in path:
                 url = f"https://study.koolearn.com/ky/course_kc_data/{productId}/30427213929/1/0"
                 params = {
@@ -487,146 +512,156 @@ class XindongfangCrawler(AbstractCrawler):
                     "_": time_util.get_current_timestamp()
                 }
                 # os.path.join(self.root_path, os.path.sep.join(map.get("pathName")))
-                self.file_path = os.path.join(self.root_path, "math/数学2")
+                n2 = "数学二"
+                self.file_path = os.path.join(self.root_path, n1,n2)
                 if not os.path.exists(self.file_path):
                     os.mkdir(self.file_path)
                 await self.recursion_req(url,params,{})
 
     async def recursion_req(self,rurl,rparams,map):
+        if not map.get("path"):
+            map["path"] = [rparams.get("pathId")]
+        # headers = self.xdf_client._pre_headers(rurl)
+        # headers = self.xdf_client.headers
+        # headers.update({"Referer": f"https://study.koolearn.com/ky/course/{map['path'][0]}/30427213929","Accept": "application/json, text/javascript, */*; q=0.01",})
+        data = await self.xdf_client.get(rurl, params=rparams)
 
-        response = self.xdf_client.get(rurl, params=rparams)
-        if response.status_code == 200:
-            data = response.json().get("data")
-            if not map.get("path"):
-                map["path"] = [rparams.get("pathId")]
+        # data = await self.xdf_client.request("GET", rurl, headers=headers,params= rparams)
 
-            if data:
-                for item in data:
-                    final = item.get("isLeaf") if item.get("isLeaf") else False
+        if data:
 
-                    if not map.get("pathName"):
-                        map["pathName"] = [item.get("name")]
-                    else:
-                        if not final or (final and item.get("type") in [0, 1]):
-                            map.get("pathName").append(item.get("name"))
 
-                    if not os.path.exists(os.path.join(self.file_path, os.path.sep.join(map.get("pathName")))):
-                        utils.logger.info("创建文件夹")
+            for item in data:
+                final = item.get("isLeaf") if item.get("isLeaf") else False
 
-                        os.mkdir(os.path.join(self.file_path, os.path.sep.join(map.get("pathName"))))
+                if not map.get("pathName"):
+                    map["pathName"] = [item.get("name")]
+                else:
+                    if not final or (final and item.get("type") in [0, 1]):
+                        map.get("pathName").append(item.get("name"))
+                current_path = os.path.join(self.file_path, os.path.sep.join(map.get("pathName")))
+                if not os.path.exists(current_path):
+                    utils.logger.info(f"创建文件夹{current_path}")
+                    os.mkdir(current_path)
 
-                    if final:
-                        if item.get("type") == 0 and not item.get("id") and not item.get("groupId"):
-                            #     这里可能是可选的内容，要重新处理下
-                            groupMap = {t.get('id'): t.get("name") for t in item.get('groups')}
-                            nodeList = item.get("nodeId").split(",")
-                            le = item.get("level") + 1 if item.get("level") else "2"
-                            for n in nodeList:
-                                map.get("path").append(n)
-                                map.get("pathName").append(groupMap.get(n))
-                                newParams = {
-                                    "pathId": map["path"][0],
-                                    "nodeId": n,
-                                    "level": le,
-                                    "_": time_util.get_current_timestamp()
-                                }
+                if final:
+                    if item.get("type") == 0 and not item.get("id") and not item.get("groupId"):
+                        #     这里可能是可选的内容，要重新处理下
+                        groupMap = {t.get('id'): t.get("name") for t in item.get('groups')}
+                        nodeList = item.get("nodeId").split(",")
+                        le = item.get("level") + 1 if item.get("level") else "2"
+                        for n in nodeList:
+                            map.get("path").append(n)
+                            map.get("pathName").append(groupMap.get(n))
+                            newParams = {
+                                "pathId": map["path"][0],
+                                "nodeId": n,
+                                "level": le,
+                                "_": time_util.get_current_timestamp()
+                            }
 
-                                newParams["learningSubjectId"] = map["path"][1]
+                            newParams["learningSubjectId"] = map["path"][1]
 
-                                await self.recursion_req(rurl, newParams, map)
-                                map.get("path").pop()
-                                map.get("pathName").pop()
+                            await self.recursion_req(rurl, newParams, map)
+                            map.get("path").pop()
                             map.get("pathName").pop()
-
-                        if item.get("type") == 2:
-                            # 视频文件 可以获取路径从而拿到m3u8文件
-                            jumpUrl = item.get("jumpUrl")
-                            ulist = jumpUrl.split("/")
-                            product = ulist[3]
-                            course = ulist[5]
-                            node = ulist[6]
-                            info = {'jumpUrl': jumpUrl,
-                                    'name': item.get("name"),
-                                    'id': item.get("id"),
-                                    'nodeId': item.get("nodeId"),
-                                    'lsVersionId': item.get("lsVersionId"),
-                                    'videoLength': item.get("videoLength"),
-                                    'live': item.get("live"),
-                                    'pathName': os.path.sep.join(map.get("pathName")),
-                                    'file_path':self.file_path,
-                                    'pathId': map["path"][0],
-                                    }
-                            if not self.cache.exists(f"xdf:video:check_pathid_{rparams.get('pathId')}:{item.get('id')}"):
-                                # get_video_url(course, node, info)
-                                kurl, res, content = await self.getM3u8File(f"{self.xdf_client._host}{jumpUrl}")
-                                await self.handle_video( kurl, res, content,info)
-
-                                self.cache.set(f"xdf:video:check_pathid_{rparams.get('pathId')}:{item.get('id')}", info.get('rvideoId'))
-                        if item.get("type") == 1:
-                            map.get("pathName").pop()
-
-                        if item.get("type") == 3:
-                            item.get('jumpUrl')
-                            resp = await self.xdf_client.get(f"https://study.koolearn.com{item.get('jumpUrl')}")
-
-                            if resp.status_code == 200:
-                                up = urlparse(resp.request.url)
-                                params = parse_qs(up.query)
-                                if params.get('testResultId'):
-                                    utils.logger.info("试卷url", resp.request.url)
-                                    testResultId = params['testResultId'][0]
-                                    await self.xdf_client.run(examId=testResultId,file_path=os.path.join(self.file_path, os.path.sep.join(map.get("pathName"))))
-
-                                else:
-                                    # 如果没点击过的试卷无法按照上面的方式处理 todo
-                                    if up.path.endswith("start-exam"):
-                                        paramsmap = {key: value[0] for key, value in params.items()}
-                                        detail_url = f"https://exam.koolearn.com/api/paper/v1/detail?paperVersion=&paperId={paramsmap.get('paperId')}"
-                                        r1 = await self.xdf_client.get(detail_url)
-
-                                        if r1.status_code == 200 and r1.json().get('status') == 0:
-                                            version = r1.json().get('data').get('paperVersion')
-                                            paramsmap.update({'paperVersion': version})
-                                            start_url = "https://exam.koolearn.com/api/exam-process/v1/start"
-                                            r2 = await self.xdf_client.post(start_url,paramsmap)
-                                            if r2.status_code == 200 and r2.json().get('status') == 0:
-
-                                                await self.xdf_client.run(examId=r2.json().get('data').get('testResultId'),
-                                                                          file_path=os.path.join(self.file_path,
-                                                                                                 os.path.sep.join(
-                                                                                                     map.get(
-                                                                                                         "pathName"))))
-                                            else:
-                                                utils.logger.error("开启试卷出错了。", r2.json())
-                                        else:
-                                            utils.logger.error("请求试卷详情出错了...", r1.text())
-
-                                    utils.logger.error("没有找到试卷的id,", resp.request.url)
-                            else:
-                                utils.logger.error("请求试卷出错了", resp.status_code)
-
-                    else:
-                        map.get("path").append(item.get("nodeId"))
-                        newParams = {
-                            "pathId": map["path"][0],
-                            "nodeId": item.get("nodeId"),
-                            "level": item.get("level") + 1 if item.get("level") else "2",
-                            "_": time_util.get_current_timestamp()
-                        }
-
-                        newParams["learningSubjectId"] = map["path"][1]
-
-                        self.recursion_req(rurl, newParams, map)
-                        map.get("path").pop()
                         map.get("pathName").pop()
 
+
+
+                    if item.get("type") == 1:
+                        map.get("pathName").pop()
+                    if item.get("type") == 2:
+                        # await self.handle_vedio(item, map)
+                        continue
+                    if item.get("type") == 3:
+                        await self.handle_examination(current_path, item)
+
+                else:
+                    map.get("path").append(item.get("nodeId"))
+                    newParams = {
+                        "pathId": map["path"][0],
+                        "nodeId": item.get("nodeId"),
+                        "level": item.get("level") + 1 if item.get("level") else "2",
+                        "_": time_util.get_current_timestamp()
+                    }
+
+                    newParams["learningSubjectId"] = map["path"][1]
+
+                    await self.recursion_req(rurl, newParams, map)
+                    map.get("path").pop()
+                    map.get("pathName").pop()
+
+
+
+    async def handle_examination(self, current_path, item):
+        item.get('jumpUrl')
+        resp = await self.xdf_client.get_document(f"https://study.koolearn.com{item.get('jumpUrl')}")
+        if resp.status_code == 200:
+            up = resp.request.url
+            params = up.params
+            testResultId = params.get("testResultId")
+            # up = urlparse(resp.request.url)
+            # params = parse_qs(up.query)
+            if testResultId:
+                # utils.logger.info(f"试卷url{resp.request.url}")
+                # testResultId = params['testResultId'][0]
+                await self.xdf_client.run(examId=testResultId, file_path=current_path)
+
+            else:
+                # 如果没点击过的试卷无法按照上面的方式处理 todo
+                if up.path.endswith("start-exam"):
+                    paramsmap = {key: value[0] for key, value in params.items()}
+                    detail_url = f"https://exam.koolearn.com/api/paper/v1/detail?paperVersion=&paperId={paramsmap.get('paperId')}"
+                    r1 = await self.xdf_client.get(detail_url)
+
+                    if r1:
+                        version = r1.get('paperVersion')
+                        paramsmap.update({'paperVersion': version})
+                        start_url = "https://exam.koolearn.com/api/exam-process/v1/start"
+                        r2 = await self.xdf_client.post(start_url, paramsmap)
+                        if r2:
+                            await self.xdf_client.run(examId=r2.get('testResultId'), file_path=current_path)
+                        else:
+                            utils.logger.error(f"开启试卷出错了。{r2}")
+                    else:
+                        utils.logger.error(f"请求试卷详情出错了...:{r1}" )
+                elif up.path.endswith("/pc/entry"):
+                    item.update({"jumpUrl": str(up).replace("https://study.koolearn.com","")})
+                    await self.handle_examination(current_path, item)
+
+
+                utils.logger.error(f"没有找到试卷的id,{resp.request.url}" )
         else:
+            utils.logger.error(f"请求试卷出错了{resp.status_code}")
 
-            utils.logger.error("请求失败，状态码：", response.status_code)
-            return None
+    async def handle_vedio(self, item, map):
+        # 视频文件 可以获取路径从而拿到m3u8文件
+        jumpUrl = item.get("jumpUrl")
+        ulist = jumpUrl.split("/")
+        product = ulist[3]
+        course = ulist[5]
+        node = ulist[6]
+        pathId = map['path'][0]
+        info = {'jumpUrl': jumpUrl,
+                'name': item.get("name"),
+                'id': item.get("id"),
+                'nodeId': item.get("nodeId"),
+                'lsVersionId': item.get("lsVersionId"),
+                'videoLength': item.get("videoLength"),
+                'live': item.get("live"),
+                'pathName': os.path.sep.join(map.get("pathName")),
+                'file_path': self.file_path,
+                'pathId': pathId,
+                }
+        if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{item.get('id')}"):
+            # get_video_url(course, node, info)
+            kurl, res, content = await self.getM3u8File(f"{self.xdf_client._host}{jumpUrl}",info)
+            await self.merge_and_generate_vedio(kurl, res, content, info)
+            self.cache.setStr(f"xdf:video:check_pathid_{pathId}:{item.get('id')}", info.get('rvideoId'))
 
-#     todo 1.搬运下载视频的代码
-    async def run_azure_command(command):
+    #     todo 1.搬运下载视频的代码
+    async def run_azure_command(self,command):
         try:
             result = subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True)
@@ -644,17 +679,8 @@ class XindongfangCrawler(AbstractCrawler):
                         line = f"{final_path}{line}"
                     newfile.write(line)
 
-    async def decrypt_key(self,raw_content, token):
 
-        tk = json.loads(base64.b64decode(token))
-        # print(tk)
-        key = tk['key']
-        newR = []
-        for d in raw_content:
-            newR.append(d ^ key)
-        return bytes(newR)
-
-    async def handle_video(self, kurl: str, res: str, content: str, map) -> bool:
+    async def merge_and_generate_vedio(self, kurl: str, res: str, content: str, map):
         # 解析key的 URL
         parsed_url = urlparse(kurl)
         pathId = map.get('pathId')
@@ -680,7 +706,7 @@ class XindongfangCrawler(AbstractCrawler):
                 mp4 = info.get('name') + ".mp4"
                 merge_mp4_name = os.path.join(final_path, mp4)
 
-                await self.generate_new_m3u8_file(final_path, new_idx_m3u8_name, content)
+                self.generate_new_m3u8_file(final_path, new_idx_m3u8_name, content)
 
                 # 提取key，并获取最终解密的key
                 kb = await self.xdf_client.get_decrypt_key(kurl,query_params)
@@ -691,23 +717,33 @@ class XindongfangCrawler(AbstractCrawler):
                 # print(kb)
                 ib = bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
-                start = time_util.get_current_time()
-                task = []
-                print("使用多线程方式下载ts文件")
-                with ThreadPoolExecutor(max_workers=20) as executor:
-                    # results = executor.map(download_ts,res)
-                    task.extend(
-                        [executor.submit(self.download_ts, ts_name=ts, vid=vid, kb=kb, ib=ib, final_path=final_path) for ts in res])
-                    print("任务总数", len(task))
+                start = time_util.get_current_timestamp()
+                # task = []
+                # print("使用多线程方式下载ts文件")
+                # with ThreadPoolExecutor(max_workers=20) as executor:
+                #     # results = executor.map(download_ts,res)
+                #     task.extend(
+                #         [executor.submit(self.download_ts, ts_name=ts, vid=vid, kb=kb, ib=ib, final_path=final_path) for ts in res])
+                #     print("任务总数", len(task))
+                # as_completed(task, timeout=10)
+                # ts_file_list=[]
+                # for ts in res:
+                #     fileurl = await self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path)
+                #     ts_file_list.append(fileurl)
 
-                as_completed(task, timeout=10)
+                loop = asyncio.get_event_loop()
+                executor = ThreadPoolExecutor(max_workers=10)
+                task = [loop.run_in_executor(executor,asyncio.run,self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path)) for ts in res]
 
-                ts_file_list = [t.result() for t in task]
+                ts_file_list = await asyncio.gather(*task,return_exceptions=True)
+
+
+                # ts_file_list = [t.result() for t in task]
                 if any(ts in [None] for ts in ts_file_list):
                     print("存在文件下载失败，无法合并")
                     return
 
-                print(f"使用多线程方式下载ts文件完成,文件内容列表为{ts_file_list}\n耗时:{time_util.get_current_time() - start}")
+                print(f"使用多线程方式下载ts文件完成,文件内容列表为{ts_file_list}\n耗时:{time_util.get_current_timestamp() - start}")
                 # 任务总数 23,使用多线程方式下载ts文件完成,耗时 0:01:06.389875
                 # 在 mac 中，任务总数 307 使用多线程方式下载ts文件完成,耗时 0:00:11.347175
 
@@ -721,9 +757,15 @@ class XindongfangCrawler(AbstractCrawler):
 
                 # os.chdir(dir_path+"m3u8")
                 # os.system("ffmpeg -i index.m3u8 -c copy new1.mp4")
-                r2 = await self.run_azure_command(f"cd '{final_path}' && {self.ffmpeg_path} -i '{local_m3u8}' -c copy '{merge_mp4_name}' -y")
+                qt = "\"" if platform.system() == "Windows" else "'"
+                generate_command = f"{self.ffmpeg_path} -i {qt}{local_m3u8}{qt} -c copy {qt}{merge_mp4_name}{qt} -y"
+                print(generate_command)
+                await self.run_azure_command(generate_command)
+
                 del_file_list = "' '".join(ts_file_list)
-                r3 = await self.run_azure_command(f"cd '{final_path}' && rm -rf '{del_file_list}' ")
+                del_command = f"cd {qt}{final_path}{qt} && rm -rf {qt}{del_file_list}{qt} "
+                print(del_command)
+                await self.run_azure_command(del_command)
                 # print(r3)
                 info['generate_mp4_address'] = merge_mp4_name
                 # 当前这种方式没有下载到本地无法移动
@@ -740,25 +782,26 @@ class XindongfangCrawler(AbstractCrawler):
 
     async def download_ts(self,ts_name, vid, kb, ib, final_path):
         urlsplit = ts_name.split("?")
-        # 这个地方还是变化蛮大的，还是要从 getmvediourl获取到具体的前缀
-        if re.search(r"^[A-Z0-9\-]+.ts$", urlsplit[0]):
-            url = f"https://media-editor.roombox.xdf.cn/{vid}/transcode/normal/{ts_name}"
-        else:
-            url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
-        # response = requests.get(url, headers=headers)
-        response = await self.xdf_client.get(url)
-        if not response.status_code == 200:
-            # 再尝试通过这个地址获取看看，如果没有报错
-            url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/roombox/10/{vid}/{ts_name}"
-            # url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
-            r2 = await self.xdf_client.get(url)
-            if not r2.status_code == 200:
-                print(f"获取 ts 文件请求失败，url={url},返回：{r2.text}")
-                return
-
-        desc = AES.new(kb, AES.MODE_CBC, ib).decrypt(response.content)
         ts_file = os.path.join(final_path, urlsplit[0])
         if not os.path.exists(ts_file):
+            # 这个地方还是变化蛮大的，还是要从 getmvediourl获取到具体的前缀
+            if re.search(r"^[A-Z0-9\-]+.ts$", urlsplit[0]):
+                url = f"https://media-editor.roombox.xdf.cn/{vid}/transcode/normal/{ts_name}"
+            else:
+                url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
+            # response = requests.get(url, headers=headers)
+            response = await self.xdf_client.get_native(url)
+            if not response.status_code == 200:
+                # 再尝试通过这个地址获取看看，如果没有报错
+                url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/roombox/10/{vid}/{ts_name}"
+                # url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
+                r2 = await self.xdf_client.get_native(url)
+                if not r2.status_code == 200:
+                    print(f"获取 ts 文件请求失败，url={url},返回：{r2.text}")
+                    return
+
+
+            desc = AES.new(kb, AES.MODE_CBC, ib).decrypt(response.content)
             with open(ts_file, mode="wb") as f3:
                 f3.write(desc)
             print("{}->file './{}'".format(threading.currentThread().getName(), urlsplit[0]))
