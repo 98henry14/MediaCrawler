@@ -182,7 +182,7 @@ class XindongfangClient(AbstractApiClient):
         ping_flag = False
         try:
             note_card: Dict = await self.get_note_by_keyword(keyword="小红书")
-            if note_card.get("items"):
+            if note_card.get("userId"):
                 ping_flag = True
         except Exception as e:
             utils.logger.error(f"[XindongfangClient.pong] Ping xhs failed: {e}, and try to login again...")
