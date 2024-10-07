@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from .exception import DataFetchError, IPBlockError
 # from .field import SearchNoteType, SearchSortType
 # from .help import get_search_id, sign
-import requests
+import html
 
 
 class XindongfangClient(AbstractApiClient):
@@ -103,6 +103,7 @@ class XindongfangClient(AbstractApiClient):
         elif data.get('status') == self.IP_ERROR_CODE:
             raise IPBlockError(self.IP_ERROR_STR)
         else:
+            utils.logger.error(f"[XindongfangClient.request] request {url} err, params:{kwargs}, res:{response.json()}")
             raise DataFetchError(data.get("msg", None))
 
     async def get(self, uri: str, params=None) -> Dict:
@@ -540,9 +541,12 @@ class XindongfangClient(AbstractApiClient):
 
     async def replaceImg(self, content):
         new_content = ""
-        for img in re.findall(self.imgParttern,content):
-            c1 = await self.downloadImg(img)
-            content = content + "" + c1
+        if re.findall(self.imgParttern,content):
+            for img in re.findall(self.imgParttern,content):
+                c1 = await self.downloadImg(img)
+                content = content + "" + c1
+        else:
+            new_content = html.unescape(content)
         return new_content
         # return re.sub(self.imgParttern, self.downloadImg, content)
 

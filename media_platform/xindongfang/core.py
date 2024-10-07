@@ -453,40 +453,53 @@ class XindongfangCrawler(AbstractCrawler):
         # await self.context_page.goto("https://study.koolearn.com/ky/learning/188924/22666338/18800049")
         nodeId = url.split("/")[-2]
         pathId = map.get("pathId")
-        if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{nodeId}"):
+        if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{map.get('id')}"):
             np = await self.browser_context.new_page()
             np.set_default_timeout(60000)
             await np.goto(url)
+            try:
+                async with np.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
+                    info = await r2.value
 
-            async with np.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
-                info = await r2.value
-                req_url = info.request.url.split("?")[0]
-                filename = req_url.split("/")[-1]
-                vid = req_url.split("/")[-2]
-                text = await info.text()
-                utils.logger.info(f"[XindongfangCrawler.close] 获取m3u8的文件内容 ...m3u8: {filename},vid: {vid}")
-    #             写入到本地文件,todo,记得替换路径,这里也可以直接拿到相关的信息然后往下传递
-    #             async with open(os.path.join(self.file_path,filename),"w",encoding="utf-8") as f:
-    #                 f.write(text)
-                map.update({"rvideoId":vid})
-                self.cache.hset(f"xdf:video:pathid_{pathId}", vid,json.dumps(map,ensure_ascii=False ))
-                ts_urls = []
-                key_url = ""
-                content = []
-                for line in text.split("\n"):
-                    if not line.strip():
-                        continue
-                    if line.startswith('#'):
-                        if line.startswith('#EXT-X-KEY:'):
-                            key_url = line.split(',')[1].strip().replace("URI=", "").replace("\"", "")
-                        else:
-                            content.append(f"{line}\n")
-                        continue
-                    content.append(f"{os.path.sep}{line.split('?')[0]}\n")
-                    ts_urls.append(line.strip())
-                return key_url, ts_urls, content
+                    req_url = info.request.url.split("?")[0]
+                    filename = req_url.split("/")[-1]
+                    m3u8_url_prefix = ""
+                    if re.search(r"^[A-Z0-9\-]+.m3u8$", filename):
+                        vid = req_url.split("/")[-4]
+                    else:
+                        vid = req_url.split("/")[-2]
+                        m3u8_url_prefix = "/".join(req_url.split("/")[:-2])
+
+                    text = await info.text()
+                    utils.logger.info(f"[XindongfangCrawler.close] 获取m3u8的文件内容 ...m3u8: {filename},vid: {vid}")
+        #             写入到本地文件,todo,记得替换路径,这里也可以直接拿到相关的信息然后往下传递
+        #             async with open(os.path.join(self.file_path,filename),"w",encoding="utf-8") as f:
+        #                 f.write(text)
+                    map.update({"rvideoId":vid,"m3u8_url_prefix":m3u8_url_prefix})
+
+
+                    ts_urls = []
+                    key_url = ""
+                    content = []
+                    for line in text.split("\n"):
+                        if not line.strip():
+                            continue
+                        if line.startswith('#'):
+                            if line.startswith('#EXT-X-KEY:'):
+                                key_url = line.split(',')[1].strip().replace("URI=", "").replace("\"", "")
+                            else:
+                                content.append(f"{line}\n")
+                            continue
+                        content.append(f"{os.path.sep}{line.split('?')[0]}\n")
+                        ts_urls.append(line.strip())
+
+                    self.cache.hset(f"xdf:video:pathid_{pathId}", vid, json.dumps(map, ensure_ascii=False))
+                    return key_url, ts_urls, content
+            except Exception as e:
+                utils.logger.error(f"[XindongfangCrawler.close] 获取m3u8文件失败,原因:{e},路径:{map.get('pathName')}{map.get('name')}")
+                raise
         else:
-            utils.logger.info("[XindongfangCrawler.close] 获取m3u8文件已经存在,直接返回 ...")
+            utils.logger.info(f"[XindongfangCrawler.close] 获取m3u8文件已经存在,直接返回 ,路径:{map.get('pathName')}{map.get('name')}...对应缓存信息 -> xdf:video:check_pathid_{pathId}:{nodeId}")
 
 
 
@@ -498,13 +511,18 @@ class XindongfangCrawler(AbstractCrawler):
 
         # product = self.cache.hgetall("product:189526")
         # product.get('lessonStage').get('344056')
-        product = ["189526"]
+        product = ["188924","189526"]
+
         for productId in product:
-            path = ["344056"]
-            n1 = "math"
+
+            path = json.loads(self.cache.hget(f"xdf:product:{productId}",'lessonStage'))
+            n1 = self.cache.hget(f"xdf:product:{productId}",'productName').decode("utf-8").replace("\"","")
             if not os.path.exists(os.path.join(self.root_path,n1)):
                 os.mkdir(os.path.join(self.root_path,n1))
-            for pathId in path:
+            for lession in path:
+                pathId = lession.get('id')
+                if pathId in [386014,344053]:
+                    continue
                 url = f"https://study.koolearn.com/ky/course_kc_data/{productId}/30427213929/1/0"
                 params = {
                     "pathId": pathId,
@@ -513,7 +531,7 @@ class XindongfangCrawler(AbstractCrawler):
                     "_": time_util.get_current_timestamp()
                 }
                 # os.path.join(self.root_path, os.path.sep.join(map.get("pathName")))
-                n2 = "数学2"
+                n2 = lession.get('name')
                 self.file_path = os.path.join(self.root_path, n1,n2)
                 if not os.path.exists(self.file_path):
                     os.mkdir(self.file_path)
@@ -523,7 +541,7 @@ class XindongfangCrawler(AbstractCrawler):
         if not map.get("path"):
             map["path"] = [rparams.get("pathId")]
 
-        print(f"|{'一'*len(map['path'])} {map['path'][-1]}")
+        print(f"|{'一'*len(map['path'])} {map['path'][-1]} {map.get('pathName',[])}")
         # headers = self.xdf_client._pre_headers(rurl)
         # headers = self.xdf_client.headers
         # headers.update({"Referer": f"https://study.koolearn.com/ky/course/{map['path'][0]}/30427213929","Accept": "application/json, text/javascript, */*; q=0.01",})
@@ -562,12 +580,38 @@ class XindongfangCrawler(AbstractCrawler):
                             }
 
                             newParams["learningSubjectId"] = map["path"][1]
-
+                            # 继续请求前，增加一个参数，第一次递归请求时就提前先切换数据源,
+                            if not item.get('activeGroupId') or item.get('activeGroupId') != n:
+                                map.update({'multi_node': n,'node_list':nodeList})
+                            # 再递归请求子数据
                             await self.recursion_req(rurl, newParams, map)
                             map.get("path").pop()
                             map.get("pathName").pop()
                         map.get("pathName").pop()
 
+                    # 处理多个师资可选的情况下，先选择其中一个
+                    if map.get('multi_node','') and item.get('type') in [2, 3, 10]:
+                        node = map.get('multi_node')
+                        node_list = map.get('node_list')
+                        preidlist = list(set(node_list) - set([node]))
+                        jumpUrl = item.get("jumpUrl")
+                        urllist = jumpUrl.split('/')
+                    #     /ky/live/enterlive/188924/22666338/19535209/30427213929
+                        courseId = urllist[-3]
+                        productId = urllist[-4]
+                        orderNo = urllist[-1]
+                        choise_url =f"https://study.koolearn.com/tongyong/save_choice/{courseId}"
+                        choise_data = {
+                            "id": node,
+                            "preId": preidlist[0] if len(preidlist)>0 else "",
+                            "orderNo": orderNo,
+                            "productId": productId,
+                        }
+
+                        await self.xdf_client.post(choise_url,choise_data)
+
+                        map.pop('multi_node')
+                        map.pop('node_list')
 
 
                     if item.get("type") == 1:
@@ -615,11 +659,20 @@ class XindongfangCrawler(AbstractCrawler):
                 else:
                     # 如果没点击过的试卷无法按照上面的方式处理 todo
                     if up.path.endswith("start-exam"):
-                        paramsmap = {key: value[0] for key, value in params.items()}
+                        paramsmap = {key: value for key, value in params.items()}
                         detail_url = f"https://exam.koolearn.com/api/paper/v1/detail?paperVersion=&paperId={paramsmap.get('paperId')}"
                         r1 = await self.xdf_client.get(detail_url)
 
                         if r1:
+                            check_url ="https://exam.koolearn.com/api/exam-process/v1/check-platformsn"
+                            check_post_data= {
+                                  "paperId": paramsmap.get('paperId'),
+                                  "platform": paramsmap.get('platform'),
+                                  "platformSn": paramsmap.get('platformSn')
+                                }
+                            check_resp = await self.xdf_client.post(check_url, check_post_data)
+
+
                             version = r1.get('paperVersion')
                             paramsmap.update({'paperVersion': version})
                             start_url = "https://exam.koolearn.com/api/exam-process/v1/start"
@@ -643,22 +696,27 @@ class XindongfangCrawler(AbstractCrawler):
     async def handle_live_vedio(self, item, map):
         pathId = map['path'][0]
         jumpUrl = item.get("jumpUrl")
-        if not jumpUrl:
+        isBroadcasting = item.get("isBroadcasting")
+        if not jumpUrl or isBroadcasting:
             return
         vedio_file = os.path.join(self.file_path,os.path.sep.join(map.get("pathName")),item.get('name')+'.mp4')
 
         if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{item.get('id')}"):
-            newp = await self.browser_context.new_page()
-            newp.set_default_timeout(60000)
-            await newp.goto(f"{self.xdf_client._host}{jumpUrl}", wait_until="domcontentloaded")
+            np = await self.browser_context.new_page()
+            np.set_default_timeout(60000)
+            await np.goto(f"{self.xdf_client._host}{jumpUrl}", wait_until="domcontentloaded")
+            try:
+                async with np.expect_response("**/v1/play/getVideoUrl") as resp:
+                    info = await resp.value
+                    json = await info.json()
+                    info.request.post_data_json
+                    vedio_url = json.get('url_infos')[0].get('url')
+                    # self.cache.setStr("18800049", )
+            except Exception as e:
+                utils.logger.exception(e)
+                utils.logger.exception(f"直播课请求失败:{jumpUrl}")
 
-            async with newp.expect_response("**/v1/play/getVideoUrl") as resp:
-                info = await resp.value
-                json = await info.json()
-                info.request.post_data_json
-                vedio_url = json.get('url_infos')[0].get('url')
-                # self.cache.setStr("18800049", )
-
+                raise
             vedio = await self.xdf_client.get_native(vedio_url)
             with open(vedio_file, mode="wb") as f3:
                 f3.write(vedio.content)
@@ -740,6 +798,10 @@ class XindongfangCrawler(AbstractCrawler):
 
                 # 提取key，并获取最终解密的key
                 kb = await self.xdf_client.get_decrypt_key(kurl,query_params)
+                # utils.logger.info(f"解析key的 URL: {kurl},获得 kb 的值: {kb}")
+                if not kb:
+                    utils.logger.error(f"生成的解码有错误，请重试,{kurl}")
+                    raise
                 # resp = requests.get(kurl, headers=headers, stream=True)
                 # resp.raw.decode_content = True
                 # dt = resp.raw.read()
@@ -763,7 +825,7 @@ class XindongfangCrawler(AbstractCrawler):
 
                 loop = asyncio.get_event_loop()
                 executor = ThreadPoolExecutor(max_workers=10)
-                task = [loop.run_in_executor(executor,asyncio.run,self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path)) for ts in res]
+                task = [loop.run_in_executor(executor,asyncio.run,self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path,info = info)) for ts in res]
 
                 ts_file_list = await asyncio.gather(*task,return_exceptions=True)
 
@@ -810,7 +872,7 @@ class XindongfangCrawler(AbstractCrawler):
         else:
             print("未从 redis 中找到匹配数据，video id:", vid)
 
-    async def download_ts(self,ts_name, vid, kb, ib, final_path):
+    async def download_ts(self,ts_name, vid, kb, ib, final_path,info):
         urlsplit = ts_name.split("?")
         ts_file = os.path.join(final_path, urlsplit[0])
         if not os.path.exists(ts_file):
@@ -818,20 +880,26 @@ class XindongfangCrawler(AbstractCrawler):
             if re.search(r"^[A-Z0-9\-]+.ts$", urlsplit[0]):
                 url = f"https://media-editor.roombox.xdf.cn/{vid}/transcode/normal/{ts_name}"
             else:
-                url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
+                if info.get('m3u8_url_prefix'):
+                    url = f"{info.get('m3u8_url_prefix')}/{vid}/{ts_name}"
+                else:
+                    url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
             # response = requests.get(url, headers=headers)
             response = await self.xdf_client.get_native(url)
             if not response.status_code == 200:
                 # 再尝试通过这个地址获取看看，如果没有报错
-                url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/roombox/10/{vid}/{ts_name}"
-                # url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/{vid}/{ts_name}"
+                # url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/roombox/10/{vid}/{ts_name}"
+                url = f"https://media-editor.roombox.xdf.cn/clouddriver-transcode/koolearn/11/{vid}/{ts_name}"
                 r2 = await self.xdf_client.get_native(url)
                 if not r2.status_code == 200:
                     print(f"获取 ts 文件请求失败，url={url},返回：{r2.text}")
                     return
 
-
-            desc = AES.new(kb, AES.MODE_CBC, ib).decrypt(response.content)
+            try:
+                desc = AES.new(kb, AES.MODE_CBC, ib).decrypt(response.content)
+            except Exception as e:
+                utils.logger.error(f"解密失败，vid={vid},ts={ts_name},错误信息：{e}")
+                raise
             with open(ts_file, mode="wb") as f3:
                 f3.write(desc)
             print("{}->file './{}'".format(threading.currentThread().getName(), urlsplit[0]))
