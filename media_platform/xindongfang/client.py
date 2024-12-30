@@ -103,8 +103,8 @@ class XindongfangClient(AbstractApiClient):
         elif data.get('status') == self.IP_ERROR_CODE:
             raise IPBlockError(self.IP_ERROR_STR)
         else:
-            utils.logger.error(f"[XindongfangClient.request] request {url} err, params:{kwargs}, res:{response.json()}")
-            raise DataFetchError(data.get("msg", None))
+            utils.logger.error(f" request err: {url} , params:{kwargs.pop('params',{})}, res:{response.json()}")
+            raise DataFetchError(data.get("msg", "异常信息"))
 
     async def get(self, uri: str, params=None) -> Dict:
         """
@@ -183,7 +183,8 @@ class XindongfangClient(AbstractApiClient):
         ping_flag = False
         try:
             note_card: Dict = await self.get_note_by_keyword(keyword="小红书")
-            if note_card.get("userId"):
+            if note_card.get("userId") and not note_card.get("userId") == -1:
+                print("登录信息：",note_card)
                 ping_flag = True
         except Exception as e:
             utils.logger.error(f"[XindongfangClient.pong] Ping xhs failed: {e}, and try to login again...")
@@ -557,10 +558,11 @@ class XindongfangClient(AbstractApiClient):
             for np in notp:
                 imgc = await self.replaceImg(np)
                 new_content = new_content + "" + imgc
-
-            return new_content
+            # 不处理直接写出文件
+            return html.unescape(content)
+            # return new_content
         else:
-            return content
+            return html.unescape(content)
 
     async def getDeatil(self, qs):
         url = "https://exam.koolearn.com/api/question/v1/detail"

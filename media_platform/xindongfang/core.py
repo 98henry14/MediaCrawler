@@ -1,7 +1,11 @@
 import asyncio
+import gc
+import logging
 import os, re, json
 import platform
 import random
+import traceback
+import psutil
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple
 
@@ -27,6 +31,7 @@ import subprocess
 import base64
 from Crypto.Cipher import AES
 import threading
+import shlex
 
 
 class XindongfangCrawler(AbstractCrawler):
@@ -42,6 +47,8 @@ class XindongfangCrawler(AbstractCrawler):
         self.cache = RedisCache()
         self.root_path = config.XDF_ROOT_PATH
         self.ffmpeg_path = config.FFMPEG_PATH
+        self.loop = asyncio.get_event_loop()
+        self.executor = ThreadPoolExecutor(max_workers=30)
 
     async def start(self) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -90,7 +97,10 @@ class XindongfangCrawler(AbstractCrawler):
             if config.CRAWLER_TYPE == "search":
                 # Search for notes and retrieve their comment information.
                 # await self.search()
+                # 递归处理节点数据
                 await self.handle_all_path()
+                # 递归处理🌳结构
+                # await self.handle_dictionary_tree()
                 # await self.test()
             elif config.CRAWLER_TYPE == "detail":
                 # Get the information and comments of the specified post
@@ -460,6 +470,9 @@ class XindongfangCrawler(AbstractCrawler):
             try:
                 async with np.expect_response(re.compile(r'.*\.m3u8.*')) as r2:
                     info = await r2.value
+                    # "https://media-editor.roombox.xdf.cn/clouddriver-transcode/8c9626c0a74471ef8eabf7e7c45a6302/9b0f720f7f564699abeaeb2c3cce1c39.m3u8
+                    # ?MtsHlsUriToken=eyJ0aW1lIjoxNzMzMjgyOTcyLCJ0b2tlbiI6IjcxYjYwYjFiZDQxYWQ0ZTBiOWU4ZDE4MjhlNDc1NzM1Iiwia2V5IjoyNiwiZW5jX3R5cGUiOjIsInVybF90eXBlIjoxLCJkZWZpbml0aW9uIjoiSEQiLCJzdHJlYW1fdHlwZSI6InZpZGVvIiwiYXBwX2lkIjoicm9vbWJveCIsIkNhdGVnb3J5SWQiOjN9
+                    # &auth_key=1733801372-2d7d71f82c404a0096358f8902c5518e-0-b6d031ace2db1e1a58bb90c38d4d09a1"
 
                     req_url = info.request.url.split("?")[0]
                     filename = req_url.split("/")[-1]
@@ -477,41 +490,161 @@ class XindongfangCrawler(AbstractCrawler):
         #                 f.write(text)
                     map.update({"rvideoId":vid,"m3u8_url_prefix":m3u8_url_prefix})
 
-
-                    ts_urls = []
-                    key_url = ""
-                    content = []
-                    for line in text.split("\n"):
-                        if not line.strip():
-                            continue
-                        if line.startswith('#'):
-                            if line.startswith('#EXT-X-KEY:'):
-                                key_url = line.split(',')[1].strip().replace("URI=", "").replace("\"", "")
-                            else:
-                                content.append(f"{line}\n")
-                            continue
-                        content.append(f"{os.path.sep}{line.split('?')[0]}\n")
-                        ts_urls.append(line.strip())
+                    key_url, ts_urls, content = await self.extract_m3u8_content(text)
 
                     self.cache.hset(f"xdf:video:pathid_{pathId}", vid, json.dumps(map, ensure_ascii=False))
-                    return key_url, ts_urls, content
+
             except Exception as e:
                 utils.logger.error(f"[XindongfangCrawler.close] 获取m3u8文件失败,原因:{e},路径:{map.get('pathName')}{map.get('name')}")
                 raise
+            else:
+                await np.close()
+                return key_url, ts_urls, content
         else:
             utils.logger.info(f"[XindongfangCrawler.close] 获取m3u8文件已经存在,直接返回 ,路径:{map.get('pathName')}{map.get('name')}...对应缓存信息 -> xdf:video:check_pathid_{pathId}:{nodeId}")
 
+    async def extract_m3u8_content(self, text):
+        """
+        调用 m3u8 的文件接口，根据返回的内容提取解密 key、ts 文件的地址、自定义地址内容
+        """
+        ts_urls = []
+        key_url = ""
+        content = []
+        for line in text.split("\n"):
+            if not line.strip():
+                continue
+            if line.startswith('#'):
+                if line.startswith('#EXT-X-KEY:'):
+                    key_url = line.split(',')[1].strip().replace("URI=", "").replace("\"", "")
+                else:
+                    content.append(f"{line}\n")
+                continue
+            content.append(f"{os.path.sep}{line.split('?')[0]}\n")
+            ts_urls.append(line.strip())
+        return key_url, ts_urls, content
 
+    async def handle_dictionary_tree(self):
+        product = self.cache.hgetall("xdf:product")
+        for productId,info in product.items():
+            productId = productId.decode("utf-8")
+            path = json.loads(self.cache.hget(f"xdf:product:{productId}",'lessonStage'))
+            n1 = self.cache.hget(f"xdf:product:{productId}",'productName').decode("utf-8").replace("\"","")
+
+            for lession in path:
+                pathId = lession.get('id')
+                url = f"https://study.koolearn.com/ky/course_kc_data/{productId}/30427213929/1/0"
+                params = {
+                    "pathId": pathId,
+                    "nodeId": "-1",
+                    "level": "1",
+                    "_": time_util.get_current_timestamp()
+                }
+                n2 = lession.get('name')
+                path = ["xdf_course_tree", n1, n2]
+                await self.recursion_dictionary_tree(url,params,{'pathName':path})
+
+    async def recursion_dictionary_tree(self,rurl,rparams,map):
+        if not map.get("path"):
+            map["path"] = [rparams.get("pathId")]
+
+        data = await self.xdf_client.get(rurl, params=rparams)
+
+        # data = await self.xdf_client.request("GET", rurl, headers=headers,params= rparams)
+
+        if data:
+
+            for item in data:
+                try:
+                    final = item.get("isLeaf") if item.get("isLeaf") else False
+
+                    if not map.get("pathName"):
+                        map["pathName"] = [item.get("name")]
+                    else:
+                        if not final or (final and item.get("type") in [0, 1]):
+                            map.get("pathName").append(item.get("name"))
+
+
+                    if final:
+                        if item.get("type") == 0 and not item.get("id") and not item.get("groupId"):
+                            #     这里可能是可选的内容，要重新处理下
+                            groupMap = {t.get('id'): t.get("name") for t in item.get('groups')}
+                            nodeList = item.get("nodeId").split(",")
+                            le = item.get("level") + 1 if item.get("level") else "2"
+                            for n in nodeList:
+                                map.get("path").append(n)
+                                map.get("pathName").append(groupMap.get(n))
+                                newParams = {
+                                    "pathId": map["path"][0],
+                                    "nodeId": n,
+                                    "level": le,
+                                    "_": time_util.get_current_timestamp()
+                                }
+
+                                newParams["learningSubjectId"] = map["path"][1]
+                                if not item.get('activeGroupId') or item.get('activeGroupId') != n:
+                                    map.update({'multi_node': n,'node_list':nodeList})
+                                # 再递归请求子数据
+                                await self.recursion_dictionary_tree(rurl, newParams, map)
+                                map.get("path").pop()
+                                map.get("pathName").pop()
+                            map.get("pathName").pop()
+
+                        # 处理多个师资可选的情况下，先选择其中一个，这里还要判断下
+                        # if map.get('multi_node','') and item.get('jumpUrl') and item.get('type') in [2, 3, 10]:
+                        #     node = map.get('multi_node')
+                        #     node_list = map.get('node_list')
+                        #     preidlist = list(set(node_list) - set([node]))
+                        #     jumpUrl = item.get("jumpUrl")
+                        #     urllist = jumpUrl.split('/')
+                        # #     /ky/live/enterlive/188924/22666338/19535209/30427213929
+                        #     courseId = urllist[-3]
+                        #     productId = urllist[-4]
+                        #     orderNo = urllist[-1]
+                        #     choise_url =f"https://study.koolearn.com/tongyong/save_choice/{courseId}"
+                        #     choise_data = {
+                        #         "id": node,
+                        #         "preId": preidlist[0] if len(preidlist)>0 else "",
+                        #         "orderNo": orderNo,
+                        #         "productId": productId,
+                        #     }
+                        #
+                        #     await self.xdf_client.post(choise_url,choise_data)
+                        #
+                        #     map.pop('multi_node')
+                        #     map.pop('node_list')
+                        map.get("pathName").append(item.get('name'))
+                        key = ":".join(map.get("pathName"))
+                        self.cache.setStr(key,item)
+                        map.get("pathName").pop()
+
+                    else:
+                        map.get("path").append(item.get("nodeId"))
+                        newParams = {
+                            "pathId": map["path"][0],
+                            "nodeId": item.get("nodeId"),
+                            "level": item.get("level") + 1 if item.get("level") else "2",
+                            "_": time_util.get_current_timestamp()
+                        }
+
+                        newParams["learningSubjectId"] = map["path"][1]
+
+                        await self.recursion_dictionary_tree(rurl, newParams, map)
+                        map.get("path").pop()
+                        map.get("pathName").pop()
+                except Exception as e:
+                    print(traceback.print_exc())
+                    logging.error(f"发生异常了，直接忽略，->{e},\n item->{str(item)}")
 
     async def handle_all_path(self):
         """
         处理文件目录跟路径
         todo 一个循环搞死吗?
         """
-
-        # product = self.cache.hgetall("product:189526")
-        # product.get('lessonStage').get('344056')
-        product = ["188924","189526"]
+        # 189526  = 数学
+        # 188924  = 英语
+        # 188975  = 政治
+        # 166089  = 计算机
+        product = ["189526","188924"] #,"188975","166089"
 
         for productId in product:
 
@@ -522,6 +655,8 @@ class XindongfangCrawler(AbstractCrawler):
             for lession in path:
                 pathId = lession.get('id')
                 if pathId in [386014,344053]:
+                    # 跳过一些不需要的，
+                    # 数学  386014 - 宠粉关怀：节点提醒&考前点睛&福利课堂 ;344053 - 导学
                     continue
                 url = f"https://study.koolearn.com/ky/course_kc_data/{productId}/30427213929/1/0"
                 params = {
@@ -550,94 +685,105 @@ class XindongfangCrawler(AbstractCrawler):
         # data = await self.xdf_client.request("GET", rurl, headers=headers,params= rparams)
 
         if data:
+
             for item in data:
-                final = item.get("isLeaf") if item.get("isLeaf") else False
+                try:
+                    final = item.get("isLeaf") if item.get("isLeaf") else False
 
-                if not map.get("pathName"):
-                    map["pathName"] = [item.get("name")]
-                else:
-                    if not final or (final and item.get("type") in [0, 1]):
-                        map.get("pathName").append(item.get("name"))
-                current_path = os.path.join(self.file_path, os.path.sep.join(map.get("pathName")))
-                if not os.path.exists(current_path):
-                    utils.logger.info(f"创建文件夹{current_path}")
-                    os.mkdir(current_path)
+                    if not map.get("pathName"):
+                        map["pathName"] = [item.get("name")]
+                    else:
+                        if not final or (final and item.get("type") in [0, 1]):
+                            map.get("pathName").append(item.get("name"))
+                    current_path = os.path.join(self.file_path, os.path.sep.join(map.get("pathName")))
+                    if not os.path.exists(current_path):
+                        utils.logger.info(f"创建文件夹{current_path}")
+                        os.mkdir(current_path)
 
-                if final:
-                    if item.get("type") == 0 and not item.get("id") and not item.get("groupId"):
-                        #     这里可能是可选的内容，要重新处理下
-                        groupMap = {t.get('id'): t.get("name") for t in item.get('groups')}
-                        nodeList = item.get("nodeId").split(",")
-                        le = item.get("level") + 1 if item.get("level") else "2"
-                        for n in nodeList:
-                            map.get("path").append(n)
-                            map.get("pathName").append(groupMap.get(n))
-                            newParams = {
-                                "pathId": map["path"][0],
-                                "nodeId": n,
-                                "level": le,
-                                "_": time_util.get_current_timestamp()
+                    if final:
+                        if item.get("type") == 0 and not item.get("id") and not item.get("groupId"):
+                            #     这里可能是可选的内容，要重新处理下
+                            groupMap = {t.get('id'): t.get("name") for t in item.get('groups')}
+                            nodeList = item.get("nodeId").split(",")
+                            le = item.get("level") + 1 if item.get("level") else "2"
+                            for n in nodeList:
+                                map.get("path").append(n)
+                                map.get("pathName").append(groupMap.get(n))
+                                newParams = {
+                                    "pathId": map["path"][0],
+                                    "nodeId": n,
+                                    "level": le,
+                                    "_": time_util.get_current_timestamp()
+                                }
+
+                                newParams["learningSubjectId"] = map["path"][1]
+                                # 继续请求前，增加一个参数，第一次递归请求时就提前先切换数据源,
+                                # todo 分2种情况处理，如果还没开启的，即当前激活的节点不存在，先调接口保存，因为这里发现在下面调用的话还是有问题，但是产品跟课程 id 的取数是个问题
+                                # 另外一种是当前激活的节点（必须有）跟准备查询的节点不一致，这种可以再往下递归的时候处理
+                                # if not item.get('activeGroupId') or item.get('activeGroupId') != n:
+                                map.update({'multi_node': n,'node_list':nodeList})
+                                # 再递归请求子数据
+                                await self.recursion_req(rurl, newParams, map)
+                                map.get("path").pop()
+                                map.get("pathName").pop()
+                            map.get("pathName").pop()
+
+                        # 处理多个师资可选的情况下，先选择其中一个，这里还要判断下
+                        if map.get('multi_node','') and item.get('jumpUrl') and item.get('type') in [2, 3, 10]:
+                            node = map.get('multi_node')
+                            node_list = map.get('node_list')
+                            preidlist = list(set(node_list) - set([node]))
+                            jumpUrl = item.get("jumpUrl")
+                            urllist = jumpUrl.split('/')
+                        #     /ky/live/enterlive/188924/22666338/19535209/30427213929
+                            courseId = urllist[-3]
+                            productId = urllist[-4]
+                            orderNo = urllist[-1]
+                            choise_url =f"https://study.koolearn.com/tongyong/save_choice/{courseId}"
+                            choise_data = {
+                                "id": node,
+                                "preId": preidlist[0] if len(preidlist)>0 else "",
+                                "orderNo": orderNo,
+                                "productId": productId,
                             }
 
-                            newParams["learningSubjectId"] = map["path"][1]
-                            # 继续请求前，增加一个参数，第一次递归请求时就提前先切换数据源,
-                            if not item.get('activeGroupId') or item.get('activeGroupId') != n:
-                                map.update({'multi_node': n,'node_list':nodeList})
-                            # 再递归请求子数据
-                            await self.recursion_req(rurl, newParams, map)
-                            map.get("path").pop()
-                            map.get("pathName").pop()
-                        map.get("pathName").pop()
+                            await self.xdf_client.post(choise_url,choise_data)
 
-                    # 处理多个师资可选的情况下，先选择其中一个
-                    if map.get('multi_node','') and item.get('type') in [2, 3, 10]:
-                        node = map.get('multi_node')
-                        node_list = map.get('node_list')
-                        preidlist = list(set(node_list) - set([node]))
-                        jumpUrl = item.get("jumpUrl")
-                        urllist = jumpUrl.split('/')
-                    #     /ky/live/enterlive/188924/22666338/19535209/30427213929
-                        courseId = urllist[-3]
-                        productId = urllist[-4]
-                        orderNo = urllist[-1]
-                        choise_url =f"https://study.koolearn.com/tongyong/save_choice/{courseId}"
-                        choise_data = {
-                            "id": node,
-                            "preId": preidlist[0] if len(preidlist)>0 else "",
-                            "orderNo": orderNo,
-                            "productId": productId,
+                            map.pop('multi_node')
+                            map.pop('node_list')
+
+
+                        if item.get("type") == 1:
+                            map.get("pathName").pop()
+                        if item.get("type") == 2:
+                            await self.handle_vedio(item, map)
+                        if item.get("type") == 3:
+                            await self.handle_examination(current_path, item, map)
+                        if item.get("type") == 10:
+                    #         直播课
+                            await self.handle_live_vedio(item,map)
+
+                    else:
+                        map.get("path").append(item.get("nodeId"))
+                        newParams = {
+                            "pathId": map["path"][0],
+                            "nodeId": item.get("nodeId"),
+                            "level": item.get("level") + 1 if item.get("level") else "2",
+                            "_": time_util.get_current_timestamp()
                         }
 
-                        await self.xdf_client.post(choise_url,choise_data)
+                        newParams["learningSubjectId"] = map["path"][1]
 
-                        map.pop('multi_node')
-                        map.pop('node_list')
-
-
-                    if item.get("type") == 1:
+                        await self.recursion_req(rurl, newParams, map)
+                        map.get("path").pop()
                         map.get("pathName").pop()
-                    if item.get("type") == 2:
-                        await self.handle_vedio(item, map)
-                    if item.get("type") == 3:
-                        await self.handle_examination(current_path, item, map)
-                    if item.get("type") == 10:
-                #         直播课
-                        await self.handle_live_vedio(item,map)
+                        memory_info = psutil.virtual_memory()
+                        if memory_info.percent / 100.0 > 0.8:
+                            gc.collect()
+                except Exception as e:
+                    print(traceback.print_exc())
+                    logging.error(f"发生异常了，直接忽略，->{e},\n item->{str(item)}")
 
-                else:
-                    map.get("path").append(item.get("nodeId"))
-                    newParams = {
-                        "pathId": map["path"][0],
-                        "nodeId": item.get("nodeId"),
-                        "level": item.get("level") + 1 if item.get("level") else "2",
-                        "_": time_util.get_current_timestamp()
-                    }
-
-                    newParams["learningSubjectId"] = map["path"][1]
-
-                    await self.recursion_req(rurl, newParams, map)
-                    map.get("path").pop()
-                    map.get("pathName").pop()
 
 
 
@@ -699,29 +845,104 @@ class XindongfangCrawler(AbstractCrawler):
         isBroadcasting = item.get("isBroadcasting")
         if not jumpUrl or isBroadcasting:
             return
-        vedio_file = os.path.join(self.file_path,os.path.sep.join(map.get("pathName")),item.get('name')+'.mp4')
+        vedio_path = os.path.join(self.file_path, os.path.sep.join(map.get("pathName")))
+        vedio_file = os.path.join(vedio_path,item.get('name').replace('/','-')+'.mp4')
 
         if not self.cache.exists(f"xdf:video:check_pathid_{pathId}:{item.get('id')}"):
             np = await self.browser_context.new_page()
-            np.set_default_timeout(60000)
-            await np.goto(f"{self.xdf_client._host}{jumpUrl}", wait_until="domcontentloaded")
+            np.set_default_timeout(30000)
+            await np.goto(f"{self.xdf_client._host}{jumpUrl}", wait_until="load")
             try:
                 async with np.expect_response("**/v1/play/getVideoUrl") as resp:
                     info = await resp.value
                     json = await info.json()
                     info.request.post_data_json
-                    vedio_url = json.get('url_infos')[0].get('url')
+
+                    urlInfos = json.get('url_infos')
                     # self.cache.setStr("18800049", )
             except Exception as e:
+                print(np.url)
                 utils.logger.exception(e)
-                utils.logger.exception(f"直播课请求失败:{jumpUrl}")
+                # np.screenshot(path="./xdf_error.png")
+                utils.logger.exception(f"直播课请求失败:{vedio_file},{jumpUrl}")
 
                 raise
-            vedio = await self.xdf_client.get_native(vedio_url)
-            with open(vedio_file, mode="wb") as f3:
-                f3.write(vedio.content)
+            else:
+                await np.close()
+            vedio_url = []
+            idx = 0
+            for info in urlInfos:
+                url = info.get('url')
+                vedio_url.append(url)
 
-            self.cache.setStr(f"xdf:video:check_pathid_{pathId}:{item.get('id')}", vedio_url)
+                if url.__contains__(".m3u8"):
+                    resp = await self.xdf_client.get_native(url)
+
+                    kurl, res, content = await self.extract_m3u8_content(resp.text)
+                    # await self.merge_and_generate_vedio(kurl, res, content, info)
+
+                    new_idx_m3u8_name = f"{item.get('id')}_{idx}_la.m3u8"
+                    local_m3u8 = os.path.join(vedio_path, new_idx_m3u8_name)
+
+                    mp4 = f"{item.get('name').replace('/','-')}_{idx}.mp4"
+                    merge_mp4_name = os.path.join(vedio_path, mp4)
+                    # 生成本地m3u8文件
+                    self.generate_new_m3u8_file(vedio_path, new_idx_m3u8_name, content)
+                    # 解析key的 URL
+                    parsed_url = urlparse(kurl)
+                    query_params = parse_qs(parsed_url.query)
+                    vid = query_params['vid'][0]
+                    ib = bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+                    # 提取key，并获取最终解密的key
+                    kb = await self.xdf_client.get_decrypt_key(kurl, query_params)
+                    # utils.logger.info(f"解析key的 URL: {kurl},获得 kb 的值: {kb}")
+                    if not kb:
+                        utils.logger.error(f"生成的解码有错误，请重试,{kurl}")
+                        raise
+
+                    task = [self.loop.run_in_executor(self.executor, asyncio.run,
+                                                    self.download_ts(ts_name=ts, vid=vid, kb=kb, ib=ib,
+                                                                       final_path=vedio_path, info=info)) for ts in res]
+
+
+                    try:
+                        ts_file_list = await asyncio.gather(*task,  return_exceptions=False)
+                    except Exception as e:
+                        print(f"Error occurred during file downloads: {e}")
+
+
+                    successful_downloads = [file for file in ts_file_list if not isinstance(file, Exception)]
+
+                    if len(ts_file_list) != len(successful_downloads):
+                        print("查询到的 ts 文件跟下载完的ts 文件大小不一致",len(ts_file_list),len(res))
+                        return
+
+
+                    qt = "\"" if platform.system() == "Windows" else "'"
+                    generate_command = f"{self.ffmpeg_path} -i {qt}{local_m3u8}{qt} -c copy {qt}{merge_mp4_name}{qt} -y"
+                    print(generate_command)
+                    await self.run_azure_command(generate_command)
+
+                    del_file_list = "' '".join(ts_file_list)
+                    del_command = f"cd {qt}{vedio_path}{qt} && rm -rf {qt}{del_file_list}{qt} "
+                    print(del_command)
+                    await self.run_azure_command(del_command)
+
+
+                else:
+                    vedio = await self.xdf_client.get_native(url)
+                    if os.path.exists(vedio_file):
+                        print('存在直播类型文件,',vedio_file)
+                        mp4 = f"{item.get('name').replace('/','-')}_{idx}.mp4"
+                        vedio_file = os.path.join(vedio_path, mp4)
+                    # vedio_file = os.path.normpath(os.path.expanduser(vedio_file))
+
+                    with open(vedio_file, mode="wb") as f3:
+                        f3.write(vedio.content)
+                idx += 1
+
+            self.cache.setStr(f"xdf:video:check_pathid_{pathId}:{item.get('id')}", ";".join(vedio_url))
 
     async def handle_vedio(self, item, map):
         # 视频文件 可以获取路径从而拿到m3u8文件
@@ -823,17 +1044,26 @@ class XindongfangCrawler(AbstractCrawler):
                 #     fileurl = await self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path)
                 #     ts_file_list.append(fileurl)
 
-                loop = asyncio.get_event_loop()
-                executor = ThreadPoolExecutor(max_workers=10)
-                task = [loop.run_in_executor(executor,asyncio.run,self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path,info = info)) for ts in res]
 
-                ts_file_list = await asyncio.gather(*task,return_exceptions=True)
+                task = [self.loop.run_in_executor(self.executor,asyncio.run,self.download_ts(ts_name=ts,vid=vid,kb=kb,ib=ib,final_path=final_path,info = info)) for ts in res]
 
+
+                try:
+                    ts_file_list = await asyncio.gather(*task,  return_exceptions=False)
+                except Exception as e:
+                    print(f"Error occurred during file downloads: {e}")
+
+
+                successful_downloads = [file for file in ts_file_list if not isinstance(file, Exception)]
+
+                if len(ts_file_list) != len(successful_downloads):
+                    print("查询到的 ts 文件跟下载完的ts 文件大小不一致",len(ts_file_list),len(res))
+                    return
 
                 # ts_file_list = [t.result() for t in task]
-                if any(ts in [None] for ts in ts_file_list):
-                    print("存在文件下载失败，无法合并")
-                    return
+                # if any(ts in [None] for ts in ts_file_list):
+                #     print("存在文件下载失败，无法合并")
+                #     return
 
                 print(f"使用多线程方式下载ts文件完成,文件内容列表为{ts_file_list}\n耗时:{time_util.get_current_timestamp() - start}")
                 # 任务总数 23,使用多线程方式下载ts文件完成,耗时 0:01:06.389875
